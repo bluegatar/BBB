@@ -144,6 +144,18 @@ public class MetasecDump extends AbstractJni {
         m.put(methodAndSig, fnPtr);
     }
 
+    /** Unwrap a returned array element (DvmObject/StringObject) into a plain String. */
+    private static String asStr(Object o) {
+        if (o == null) return null;
+        if (o instanceof String) return (String) o;
+        if (o instanceof DvmObject) {
+            Object inner = ((DvmObject<?>) o).getValue();
+            if (inner instanceof String) return (String) inner;
+            if (inner != null) return String.valueOf(inner);
+        }
+        return String.valueOf(o);
+    }
+
     /** Minimal JSON string quoting (no org.json on the unidbg classpath). */
     private static String jq(String s) {
         StringBuilder b = new StringBuilder("\"");
@@ -161,6 +173,31 @@ public class MetasecDump extends AbstractJni {
             }
         }
         return b.append('"').toString();
+    }
+
+    /**
+     * Resolve an input string from (in priority order): a file pointed to by the
+     * {@code fileProp} system property, the inline {@code valProp} system property,
+     * or the supplied default. Lets the Python orchestrator inject a fresh
+     * url/body (with a current timestamp) without recompiling.
+     */
+    private static String readSource(String fileProp, String valProp, String def) {
+        try {
+            String fp = System.getProperty(fileProp);
+            if (fp != null && fp.length() > 0) {
+                byte[] data = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(fp));
+                String s = new String(data, java.nio.charset.StandardCharsets.UTF_8);
+                // strip a single trailing newline if present
+                if (s.endsWith("\r\n")) s = s.substring(0, s.length() - 2);
+                else if (s.endsWith("\n")) s = s.substring(0, s.length() - 1);
+                return s;
+            }
+            String v = System.getProperty(valProp);
+            if (v != null && v.length() > 0) return v;
+        } catch (Exception e) {
+            System.out.println("[input] readSource(" + fileProp + ") failed: " + e + " -> using default");
+        }
+        return def;
     }
 
     public static void main(String[] args) throws Exception {
@@ -275,8 +312,12 @@ public class MetasecDump extends AbstractJni {
                 System.out.println("[init] device/install id set");
 
                 // 5) getFeatureHash (c.getFeatureHash -> cmd 0x2000002 = 33554438) => the 7 security headers
-                String url = "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/?iid=1518852408614281&device_id=1518852408610185&ac=wifi&channel=huawei_8662_64&aid=8662&app_name=novelread&version_code=72432&version_name=7.2.4.32&device_platform=android&os=android&ssmix=a&device_type=23076RA4BC&device_brand=Redmi&language=zh&os_api=33&os_version=13&manifest_version_code=72432&resolution=1080*2226&dpi=440&update_version_code=72432&_rticket=1782306317500&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72432&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&rom_version=miui_V140_V14.0.10.0.TMWEUXM&cdid=6e297aec-fb86-48ed-98cc-289027ea46dd";
-                String body = "{\"biz_param\":{\"detail_page_version\":0,\"device_level\":2,\"disable_digg_stat\":false,\"disable_video_relate_book\":false,\"from_video_id\":\"\",\"need_all_video_definition\":true,\"need_mp4_align\":false,\"source\":4,\"use_os_player\":false,\"use_server_dns\":false,\"video_platform\":3},\"content_type\":1004,\"video_id\":\"7650889194310470681\"}";
+                // url/body are taken from -Dreq.url.file / -Dreq.body.file when provided
+                // (so the Python orchestrator can inject a fresh timestamp), else defaults below.
+                String url = readSource("req.url.file", "req.url",
+                        "https://api5-normal-sinfonlinea.fqnovel.com/novel/player/video_model/v1/?iid=1518852408614281&device_id=1518852408610185&ac=wifi&channel=huawei_8662_64&aid=8662&app_name=novelread&version_code=72432&version_name=7.2.4.32&device_platform=android&os=android&ssmix=a&device_type=23076RA4BC&device_brand=Redmi&language=zh&os_api=33&os_version=13&manifest_version_code=72432&resolution=1080*2226&dpi=440&update_version_code=72432&_rticket=1782306317500&host_abi=arm64-v8a&dragon_device_type=phone&pv_player=72432&compliance_status=0&need_personal_recommend=1&player_so_load=1&is_android_pad_screen=0&rom_version=miui_V140_V14.0.10.0.TMWEUXM&cdid=6e297aec-fb86-48ed-98cc-289027ea46dd");
+                String body = readSource("req.body.file", "req.body",
+                        "{\"biz_param\":{\"detail_page_version\":0,\"device_level\":2,\"disable_digg_stat\":false,\"disable_video_relate_book\":false,\"from_video_id\":\"\",\"need_all_video_definition\":true,\"need_mp4_align\":false,\"source\":4,\"use_os_player\":false,\"use_server_dns\":false,\"video_platform\":3},\"content_type\":1004,\"video_id\":\"7650889194310470681\"}");
                 com.github.unidbg.linux.android.dvm.array.ByteArray bodyArr =
                         new com.github.unidbg.linux.android.dvm.array.ByteArray(vm, body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
                 DvmObject<?> sign = y2.callStaticJniMethodObject(emulator, Y2_SIG, 33554438, 0, handle, new StringObject(vm, url), bodyArr);
@@ -287,9 +328,20 @@ public class MetasecDump extends AbstractJni {
                     if (val instanceof Object[]) {
                         Object[] arr = (Object[]) val;
                         System.out.println("[sign] String[] length=" + arr.length);
+                        StringBuilder js = new StringBuilder("{");
+                        boolean first = true;
                         for (int i = 0; i + 1 < arr.length; i += 2) {
-                            System.out.println("   " + arr[i] + " = " + arr[i + 1]);
+                            String k = asStr(arr[i]);
+                            String v2 = asStr(arr[i + 1]);
+                            System.out.println("   " + k + " = " + v2);
+                            if (k == null || v2 == null) continue;
+                            if (!first) js.append(',');
+                            js.append(jq(k)).append(':').append(jq(v2));
+                            first = false;
                         }
+                        js.append('}');
+                        // Stable marker line so an external orchestrator can parse the headers.
+                        System.out.println("__HEADERS_JSON__" + js);
                     } else {
                         System.out.println("[sign] raw => " + val);
                     }

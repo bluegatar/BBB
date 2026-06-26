@@ -27,4 +27,4 @@ CP="$UA_JAR:$(cat /tmp/cp.txt)"
 
 mkdir -p build
 "$JAVA8/javac" -cp "$CP" -d build src/MetasecDump.java
-"$JAVA8/java" -Dunidbg.tgkill.drop=true ${FAKE_TIME:+-Dunidbg.fake.time.ms=$FAKE_TIME} -cp "build:$CP" MetasecDump "$@"
+"$JAVA8/java" -Dunidbg.tgkill.drop=true ${FAKE_TIME:+-Dunidbg.fake.time.ms=$FAKE_TIME} $JVM_OPTS -cp "build:$CP" MetasecDump "$@"

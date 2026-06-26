@@ -40,5 +40,5 @@ if errorlevel 1 exit /b 1
 set TIMEPROP=
 if not "%FAKE_TIME%"=="" set TIMEPROP=-Dunidbg.fake.time.ms=%FAKE_TIME%
 
-"%JAVA8%\java" -Dunidbg.tgkill.drop=true %TIMEPROP% -cp "build;%CP%" MetasecDump %*
+"%JAVA8%\java" -Dunidbg.tgkill.drop=true %TIMEPROP% %JVM_OPTS% -cp "build;%CP%" MetasecDump %*
 endlocal
