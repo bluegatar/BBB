@@ -252,6 +252,31 @@ public class MetasecDump extends AbstractJni {
         return stubBool(signature, () -> super.callStaticBooleanMethodV(vm, dvmClass, signature, vaList));
     }
 
+    @Override
+    public long callStaticLongMethodV(BaseVM vm, DvmClass dvmClass, String signature, VaList vaList) {
+        // The library reads wall-clock time during signing via JNI. unidbg's AbstractJni
+        // doesn't implement System.currentTimeMillis()/nanoTime(), so answer them here,
+        // honoring the unidbg.fake.time.ms pin (used to reproduce a captured x-khronos)
+        // so this JNI clock matches the patched syscall clock. Without a pin we return the
+        // real "now" so x-khronos is fresh and the server accepts it.
+        if ("java/lang/System->currentTimeMillis()J".equals(signature)) {
+            String fake = System.getProperty("unidbg.fake.time.ms");
+            long now = (fake != null && !fake.isEmpty()) ? Long.parseLong(fake) : System.currentTimeMillis();
+            System.out.println("[time] System.currentTimeMillis() => " + now);
+            return now;
+        }
+        if ("java/lang/System->nanoTime()J".equals(signature)) {
+            String fake = System.getProperty("unidbg.fake.time.ms");
+            return (fake != null && !fake.isEmpty()) ? Long.parseLong(fake) * 1000000L : System.nanoTime();
+        }
+        try {
+            return super.callStaticLongMethodV(vm, dvmClass, signature, vaList);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] callStaticLongMethodV " + signature + " -> 0");
+            return 0L;
+        }
+    }
+
     // ---- generic "never crash into the debugger" fallbacks -------------------------------
     // The library probes a wide, host-dependent set of device-fingerprint fields/methods
     // (brightness, audio volumes, sensors, ...). unidbg's AbstractJni throws
