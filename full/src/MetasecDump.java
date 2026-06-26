@@ -66,9 +66,50 @@ public class MetasecDump extends AbstractJni {
             case "java/io/File->getAbsolutePath()Ljava/lang/String;":
             case "java/io/File->getCanonicalPath()Ljava/lang/String;":
                 return new StringObject(vm, (String) dvmObject.getValue());
+            case "android/content/Context->getSystemService(Ljava/lang/String;)Ljava/lang/Object;": {
+                // device fingerprinting fetches managers (audio, window, ...); return a
+                // non-null stub object so the subsequent method calls have a receiver.
+                String svc = vaList.getObjectArg(0) == null ? "" : String.valueOf(vaList.getObjectArg(0).getValue());
+                String cls;
+                switch (svc) {
+                    case "audio":     cls = "android/media/AudioManager"; break;
+                    case "window":    cls = "android/view/WindowManager"; break;
+                    case "phone":     cls = "android/telephony/TelephonyManager"; break;
+                    case "wifi":      cls = "android/net/wifi/WifiManager"; break;
+                    case "activity":  cls = "android/app/ActivityManager"; break;
+                    case "sensor":    cls = "android/hardware/SensorManager"; break;
+                    case "power":     cls = "android/os/PowerManager"; break;
+                    case "connectivity": cls = "android/net/ConnectivityManager"; break;
+                    default:          cls = "java/lang/Object"; break;
+                }
+                return vm.resolveClass(cls).newObject(null);
+            }
             default:
-                return super.callObjectMethodV(vm, dvmObject, signature, vaList);
+                return stubObject(vm, signature, () -> super.callObjectMethodV(vm, dvmObject, signature, vaList));
         }
+    }
+
+    @Override
+    public int callIntMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        // device-fingerprint instance int getters (audio volumes etc.) -> plausible defaults
+        switch (signature) {
+            case "android/media/AudioManager->getStreamVolume(I)I":    return 7;
+            case "android/media/AudioManager->getStreamMaxVolume(I)I": return 15;
+            case "android/media/AudioManager->getStreamMinVolume(I)I": return 0;
+            case "android/media/AudioManager->getRingerMode()I":       return 2; // RINGER_MODE_NORMAL
+            case "android/media/AudioManager->getMode()I":             return 0; // MODE_NORMAL
+        }
+        return stubInt(signature, () -> super.callIntMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public boolean callBooleanMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        return stubBool(signature, () -> super.callBooleanMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public int getIntField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubInt(signature, () -> super.getIntField(vm, dvmObject, signature));
     }
 
     @Override
@@ -76,7 +117,12 @@ public class MetasecDump extends AbstractJni {
         if ("java/lang/Long->longValue()J".equals(signature)) {
             return ((Number) dvmObject.getValue()).longValue();
         }
-        return super.callLongMethodV(vm, dvmObject, signature, vaList);
+        try {
+            return super.callLongMethodV(vm, dvmObject, signature, vaList);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] callLongMethodV " + signature + " -> 0");
+            return 0L;
+        }
     }
 
     @Override
@@ -88,7 +134,11 @@ public class MetasecDump extends AbstractJni {
                 || signature.startsWith("ms/bd/c/")) {
             return;
         }
-        super.callStaticVoidMethodV(vm, dvmClass, signature, vaList);
+        try {
+            super.callStaticVoidMethodV(vm, dvmClass, signature, vaList);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] callStaticVoidMethodV " + signature + " -> noop");
+        }
     }
 
     @Override
@@ -138,7 +188,7 @@ public class MetasecDump extends AbstractJni {
                 || signature.startsWith("android/provider/Settings$Global->getString(")) {
             return new StringObject(vm, "");
         }
-        return super.callStaticObjectMethodV(vm, dvmClass, signature, vaList);
+        return stubObject(vm, signature, () -> super.callStaticObjectMethodV(vm, dvmClass, signature, vaList));
     }
 
     @Override
@@ -156,7 +206,32 @@ public class MetasecDump extends AbstractJni {
             case "android/provider/Settings$Secure->ANDROID_ID:Ljava/lang/String;":
                 return new StringObject(vm, "android_id");
             default:
-                return super.getStaticObjectField(vm, dvmClass, signature);
+                return stubObject(vm, signature, () -> super.getStaticObjectField(vm, dvmClass, signature));
+        }
+    }
+
+    @Override
+    public int getStaticIntField(BaseVM vm, DvmClass dvmClass, String signature) {
+        // common AudioManager stream-type constants read right after Context.AUDIO_SERVICE
+        switch (signature) {
+            case "android/media/AudioManager->STREAM_VOICE_CALL:I":   return 0;
+            case "android/media/AudioManager->STREAM_SYSTEM:I":       return 1;
+            case "android/media/AudioManager->STREAM_RING:I":         return 2;
+            case "android/media/AudioManager->STREAM_MUSIC:I":        return 3;
+            case "android/media/AudioManager->STREAM_ALARM:I":        return 4;
+            case "android/media/AudioManager->STREAM_NOTIFICATION:I": return 5;
+            case "android/media/AudioManager->STREAM_DTMF:I":         return 8;
+        }
+        return stubInt(signature, () -> super.getStaticIntField(vm, dvmClass, signature));
+    }
+
+    @Override
+    public long getStaticLongField(BaseVM vm, DvmClass dvmClass, String signature) {
+        try {
+            return super.getStaticLongField(vm, dvmClass, signature);
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] getStaticLongField " + signature + " -> 0");
+            return 0L;
         }
     }
 
@@ -169,7 +244,52 @@ public class MetasecDump extends AbstractJni {
                 || signature.startsWith("android/provider/Settings$Global->getInt(")) {
             return 102;
         }
-        return super.callStaticIntMethodV(vm, dvmClass, signature, vaList);
+        return stubInt(signature, () -> super.callStaticIntMethodV(vm, dvmClass, signature, vaList));
+    }
+
+    @Override
+    public boolean callStaticBooleanMethodV(BaseVM vm, DvmClass dvmClass, String signature, VaList vaList) {
+        return stubBool(signature, () -> super.callStaticBooleanMethodV(vm, dvmClass, signature, vaList));
+    }
+
+    // ---- generic "never crash into the debugger" fallbacks -------------------------------
+    // The library probes a wide, host-dependent set of device-fingerprint fields/methods
+    // (brightness, audio volumes, sensors, ...). unidbg's AbstractJni throws
+    // UnsupportedOperationException for anything it doesn't implement, which drops the
+    // emulator into its interactive debugger (looks like a hang). We can't enumerate every
+    // probe, so any unimplemented query returns a type-appropriate default instead of
+    // throwing. The values only feed freshly-generated headers (server validates
+    // self-consistency + timestamp, not exact fingerprint bytes), so defaults are safe.
+    private interface ObjSup { DvmObject<?> get(); }
+    private interface IntSup { int get(); }
+    private interface BoolSup { boolean get(); }
+
+    private DvmObject<?> stubObject(BaseVM vm, String signature, ObjSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            DvmObject<?> def = signature.endsWith("Ljava/lang/String;") ? new StringObject(vm, "") : null;
+            System.out.println("[stub] object " + signature + " -> " + (def == null ? "null" : "\"\""));
+            return def;
+        }
+    }
+
+    private int stubInt(String signature, IntSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] int " + signature + " -> 0");
+            return 0;
+        }
+    }
+
+    private boolean stubBool(String signature, BoolSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] bool " + signature + " -> false");
+            return false;
+        }
     }
 
     /** Manually bind a native method to a function pointer (the library declines to
