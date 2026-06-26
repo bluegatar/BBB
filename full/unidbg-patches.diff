@@ -1,0 +1,65 @@
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
+index eaeea8b..429df6a 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
+@@ -71,7 +71,8 @@ public class AndroidElfLoader extends AbstractLoader<AndroidFileIO> implements M
+                 "ANDROID_DATA=/data",
+                 "ANDROID_ROOT=/system",
+                 "PATH=/sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin",
+-                "NO_ADDR_COMPAT_LAYOUT_FIXUP=1"
++                "NO_ADDR_COMPAT_LAYOUT_FIXUP=1",
++                "28d7fdd567361198183fa7b8e=a7"
+         });
+         this.setErrno(0);
+     }
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
+index 97b783a..aecd203 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
+@@ -708,6 +708,15 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+         return 0;
+     }
+ 
++    @Override
++    protected long currentTimeMillis() {
++        String fake = System.getProperty("unidbg.fake.time.ms");
++        if (fake != null && !fake.isEmpty()) {
++            return Long.parseLong(fake);
++        }
++        return super.currentTimeMillis();
++    }
++
+     protected int tgkill(Emulator<?> emulator) {
+         RegisterContext context = emulator.getContext();
+         int tgid = context.getIntArg(0);
+@@ -723,6 +732,9 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+             return -UnixEmulator.EINVAL;
+         }
+         SigAction action = sigActionMap.get(sig);
++        if ("true".equals(System.getProperty("unidbg.tgkill.drop"))) {
++            return 0;
++        }
+         if (threadDispatcherEnabled &&
+                 emulator.getThreadDispatcher().sendSignal(tid, sig, action == null || action.getSaHandler() == 0L ? null : new SignalTask(sig, action))) {
+             throw new ThreadContextSwitchException().setReturnValue(0);
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java b/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
+index 00018da..b06e2d7 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
+@@ -138,14 +138,14 @@ public class DalvikVM64 extends BaseVM implements VM {
+                 }
+                 if (dvmClass.getClassName().equals("java/lang/Object")) {
+                     log.debug("JNIEnv->GetSuperClass was called, class = {} According to Java Native Interface Specification, If clazz specifies the class Object, returns NULL.", dvmClass.getClassName());
+-                    throw new BackendException();
++                    return 0;
+                 }
+                 DvmClass superClass = dvmClass.getSuperclass();
+                 if (superClass == null) {
+                     if (log.isDebugEnabled()) {
+                         log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass get failed.", dvmClass.getClassName());
+                     }
+-                    throw new BackendException();
++                    return 0;
+                 } else {
+                     if (log.isDebugEnabled()) {
+                         log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass = {}", dvmClass.getClassName(), superClass.getClassName());
