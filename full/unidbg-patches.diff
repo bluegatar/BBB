@@ -13,10 +13,22 @@ index eaeea8b..429df6a 100644
          this.setErrno(0);
      }
 diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
-index 97b783a..aecd203 100644
+index 97b783a..fdffd67 100644
 --- a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
 +++ b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
-@@ -708,6 +708,15 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+@@ -323,6 +323,11 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+                 if (threadDispatcherEnabled && runningTask != null) {
+                     if (timeSpec == null) {
+                         runningTask.setWaiter(emulator, new FutexIndefinitelyWaiter(uaddr, val));
++                    } else if (timeSpec.toMillis() <= 0) {
++                        // Sub-millisecond / already-elapsed relative timeout: TimeSpec.toMillis()
++                        // truncates sub-1ms nanoseconds to 0, and FutexNanoSleepWaiter throws on a
++                        // non-positive wait. Treat it as an immediate timeout instead of crashing.
++                        throw new ThreadContextSwitchException().setReturnValue(-ETIMEDOUT);
+                     } else {
+                         runningTask.setWaiter(emulator, new FutexNanoSleepWaiter(uaddr, val, timeSpec));
+                     }
+@@ -708,6 +713,15 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
          return 0;
      }
  
@@ -32,7 +44,7 @@ index 97b783a..aecd203 100644
      protected int tgkill(Emulator<?> emulator) {
          RegisterContext context = emulator.getContext();
          int tgid = context.getIntArg(0);
-@@ -723,6 +732,9 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+@@ -723,6 +737,9 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
              return -UnixEmulator.EINVAL;
          }
          SigAction action = sigActionMap.get(sig);
@@ -63,7 +75,6 @@ index 00018da..b06e2d7 100644
                  } else {
                      if (log.isDebugEnabled()) {
                          log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass = {}", dvmClass.getClassName(), superClass.getClassName());
-
 diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java b/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
 index c807922..4f513b4 100644
 --- a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
@@ -94,3 +105,23 @@ index c807922..4f513b4 100644
          throw new UnsupportedOperationException("buffer=" + buffer + ", count=" + count + ", netlinkType=0x" + Integer.toHexString(netlinkType));
      }
  
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java b/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
+index f0e2048..9aea079 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
+@@ -15,12 +15,10 @@ public class FutexNanoSleepWaiter extends FutexWaiter {
+     public FutexNanoSleepWaiter(Pointer uaddr, int val, TimeSpec timeSpec) {
+         super(uaddr, val);
+ 
+-        this.waitMillis = timeSpec.toMillis();
++        // A sub-millisecond relative timeout truncates to 0 here; clamp to 0 so canDispatch()
++        // reports an immediate timeout instead of throwing IllegalStateException.
++        this.waitMillis = Math.max(0L, timeSpec.toMillis());
+         this.startWaitTimeInMillis = System.currentTimeMillis();
+-
+-        if (this.waitMillis <= 0) {
+-            throw new IllegalStateException();
+-        }
+     }
+ 
+     @Override
