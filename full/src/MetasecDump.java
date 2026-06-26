@@ -11,6 +11,7 @@ import com.github.unidbg.linux.android.dvm.DvmObject;
 import com.github.unidbg.linux.android.dvm.StringObject;
 import com.github.unidbg.linux.android.dvm.VM;
 import com.github.unidbg.linux.android.dvm.VaList;
+import com.github.unidbg.linux.android.dvm.VarArg;
 import com.github.unidbg.linux.android.dvm.wrapper.DvmLong;
 import com.github.unidbg.memory.Memory;
 
@@ -288,6 +289,13 @@ public class MetasecDump extends AbstractJni {
     private interface ObjSup { DvmObject<?> get(); }
     private interface IntSup { int get(); }
     private interface BoolSup { boolean get(); }
+    private interface LongSup { long get(); }
+    private interface FloatSup { float get(); }
+    private interface DoubleSup { double get(); }
+    private interface ByteSup { byte get(); }
+    private interface ShortSup { short get(); }
+    private interface CharSup { char get(); }
+    private interface VoidRun { void run(); }
 
     private DvmObject<?> stubObject(BaseVM vm, String signature, ObjSup real) {
         try {
@@ -296,6 +304,24 @@ public class MetasecDump extends AbstractJni {
             DvmObject<?> def = signature.endsWith("Ljava/lang/String;") ? new StringObject(vm, "") : null;
             System.out.println("[stub] object " + signature + " -> " + (def == null ? "null" : "\"\""));
             return def;
+        }
+    }
+
+    /** A constructed object must be non-null (the native keeps the ref and calls methods on
+     *  it). Return a stub instance of the requested class so those follow-up calls land on a
+     *  real receiver (and get stubbed there) rather than crashing. */
+    private DvmObject<?> stubNewObject(BaseVM vm, DvmClass dvmClass, String signature, ObjSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            try {
+                DvmObject<?> o = dvmClass.newObject(null);
+                System.out.println("[stub] newObject " + signature + " -> stub instance");
+                return o;
+            } catch (Throwable t) {
+                System.out.println("[stub] newObject " + signature + " -> null");
+                return null;
+            }
         }
     }
 
@@ -315,6 +341,278 @@ public class MetasecDump extends AbstractJni {
             System.out.println("[stub] bool " + signature + " -> false");
             return false;
         }
+    }
+
+    private long stubLong(String signature, LongSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] long " + signature + " -> 0");
+            return 0L;
+        }
+    }
+
+    private float stubFloat(String signature, FloatSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] float " + signature + " -> 0");
+            return 0f;
+        }
+    }
+
+    private double stubDouble(String signature, DoubleSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] double " + signature + " -> 0");
+            return 0d;
+        }
+    }
+
+    private byte stubByte(String signature, ByteSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] byte " + signature + " -> 0");
+            return 0;
+        }
+    }
+
+    private short stubShort(String signature, ShortSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] short " + signature + " -> 0");
+            return 0;
+        }
+    }
+
+    private char stubChar(String signature, CharSup real) {
+        try {
+            return real.get();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] char " + signature + " -> 0");
+            return '\0';
+        }
+    }
+
+    private void stubVoid(String signature, VoidRun real) {
+        try {
+            real.run();
+        } catch (UnsupportedOperationException e) {
+            System.out.println("[stub] void " + signature + " -> noop");
+        }
+    }
+
+    // ---- Remaining JNI entry points (every return type, instance + static, fields + methods,
+    // VaList + VarArg + construction). Routed through the stub helpers above so ANY signature
+    // unidbg doesn't implement returns a default instead of throwing into the debugger. The
+    // semantic overrides above (Context/AudioManager/Settings/System/time) take precedence;
+    // everything else lands here. This is the complete net so device fingerprinting can probe
+    // anything without crashing. -----------------------------------------------------------
+
+    @Override
+    public DvmObject<?> getObjectField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubObject(vm, signature, () -> super.getObjectField(vm, dvmObject, signature));
+    }
+
+    @Override
+    public boolean getBooleanField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubBool(signature, () -> super.getBooleanField(vm, dvmObject, signature));
+    }
+
+    @Override
+    public byte getByteField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubByte(signature, () -> super.getByteField(vm, dvmObject, signature));
+    }
+
+    @Override
+    public long getLongField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubLong(signature, () -> super.getLongField(vm, dvmObject, signature));
+    }
+
+    @Override
+    public float getFloatField(BaseVM vm, DvmObject<?> dvmObject, String signature) {
+        return stubFloat(signature, () -> super.getFloatField(vm, dvmObject, signature));
+    }
+
+    @Override
+    public boolean getStaticBooleanField(BaseVM vm, DvmClass dvmClass, String signature) {
+        return stubBool(signature, () -> super.getStaticBooleanField(vm, dvmClass, signature));
+    }
+
+    @Override
+    public byte getStaticByteField(BaseVM vm, DvmClass dvmClass, String signature) {
+        return stubByte(signature, () -> super.getStaticByteField(vm, dvmClass, signature));
+    }
+
+    @Override
+    public char callCharMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        return stubChar(signature, () -> super.callCharMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public float callFloatMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        return stubFloat(signature, () -> super.callFloatMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public double callDoubleMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        return stubDouble(signature, () -> super.callDoubleMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public byte callByteMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        return stubByte(signature, () -> super.callByteMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public short callShortMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        return stubShort(signature, () -> super.callShortMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public void callVoidMethodV(BaseVM vm, DvmObject<?> dvmObject, String signature, VaList vaList) {
+        stubVoid(signature, () -> super.callVoidMethodV(vm, dvmObject, signature, vaList));
+    }
+
+    @Override
+    public float callStaticFloatMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubFloat(signature, () -> super.callStaticFloatMethod(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public double callStaticDoubleMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubDouble(signature, () -> super.callStaticDoubleMethod(vm, dvmClass, signature, varArg));
+    }
+
+    // construction
+    @Override
+    public DvmObject<?> newObjectV(BaseVM vm, DvmClass dvmClass, String signature, VaList vaList) {
+        return stubNewObject(vm, dvmClass, signature, () -> super.newObjectV(vm, dvmClass, signature, vaList));
+    }
+
+    @Override
+    public DvmObject<?> newObject(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubNewObject(vm, dvmClass, signature, () -> super.newObject(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public DvmObject<?> allocObject(BaseVM vm, DvmClass dvmClass, String signature) {
+        return stubNewObject(vm, dvmClass, signature, () -> super.allocObject(vm, dvmClass, signature));
+    }
+
+    // VarArg method variants (native usually uses the VaList path, but cover VarArg too)
+    @Override
+    public DvmObject<?> callObjectMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        return stubObject(vm, signature, () -> super.callObjectMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public int callIntMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        return stubInt(signature, () -> super.callIntMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public long callLongMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        return stubLong(signature, () -> super.callLongMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public boolean callBooleanMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        return stubBool(signature, () -> super.callBooleanMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public void callVoidMethod(BaseVM vm, DvmObject<?> dvmObject, String signature, VarArg varArg) {
+        stubVoid(signature, () -> super.callVoidMethod(vm, dvmObject, signature, varArg));
+    }
+
+    @Override
+    public DvmObject<?> callStaticObjectMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubObject(vm, signature, () -> super.callStaticObjectMethod(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public int callStaticIntMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubInt(signature, () -> super.callStaticIntMethod(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public long callStaticLongMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubLong(signature, () -> super.callStaticLongMethod(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public boolean callStaticBooleanMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        return stubBool(signature, () -> super.callStaticBooleanMethod(vm, dvmClass, signature, varArg));
+    }
+
+    @Override
+    public void callStaticVoidMethod(BaseVM vm, DvmClass dvmClass, String signature, VarArg varArg) {
+        stubVoid(signature, () -> super.callStaticVoidMethod(vm, dvmClass, signature, varArg));
+    }
+
+    // field setters (instance + static) -> noop if unidbg can't honour them
+    @Override
+    public void setObjectField(BaseVM vm, DvmObject<?> dvmObject, String signature, DvmObject<?> value) {
+        stubVoid(signature, () -> super.setObjectField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setIntField(BaseVM vm, DvmObject<?> dvmObject, String signature, int value) {
+        stubVoid(signature, () -> super.setIntField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setLongField(BaseVM vm, DvmObject<?> dvmObject, String signature, long value) {
+        stubVoid(signature, () -> super.setLongField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setBooleanField(BaseVM vm, DvmObject<?> dvmObject, String signature, boolean value) {
+        stubVoid(signature, () -> super.setBooleanField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setFloatField(BaseVM vm, DvmObject<?> dvmObject, String signature, float value) {
+        stubVoid(signature, () -> super.setFloatField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setDoubleField(BaseVM vm, DvmObject<?> dvmObject, String signature, double value) {
+        stubVoid(signature, () -> super.setDoubleField(vm, dvmObject, signature, value));
+    }
+
+    @Override
+    public void setStaticBooleanField(BaseVM vm, DvmClass dvmClass, String signature, boolean value) {
+        stubVoid(signature, () -> super.setStaticBooleanField(vm, dvmClass, signature, value));
+    }
+
+    @Override
+    public void setStaticIntField(BaseVM vm, DvmClass dvmClass, String signature, int value) {
+        stubVoid(signature, () -> super.setStaticIntField(vm, dvmClass, signature, value));
+    }
+
+    @Override
+    public void setStaticObjectField(BaseVM vm, DvmClass dvmClass, String signature, DvmObject<?> value) {
+        stubVoid(signature, () -> super.setStaticObjectField(vm, dvmClass, signature, value));
+    }
+
+    @Override
+    public void setStaticLongField(BaseVM vm, DvmClass dvmClass, String signature, long value) {
+        stubVoid(signature, () -> super.setStaticLongField(vm, dvmClass, signature, value));
+    }
+
+    @Override
+    public void setStaticFloatField(BaseVM vm, DvmClass dvmClass, String signature, float value) {
+        stubVoid(signature, () -> super.setStaticFloatField(vm, dvmClass, signature, value));
+    }
+
+    @Override
+    public void setStaticDoubleField(BaseVM vm, DvmClass dvmClass, String signature, double value) {
+        stubVoid(signature, () -> super.setStaticDoubleField(vm, dvmClass, signature, value));
     }
 
     /** Manually bind a native method to a function pointer (the library declines to
