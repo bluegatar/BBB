@@ -63,3 +63,34 @@ index 00018da..b06e2d7 100644
                  } else {
                      if (log.isDebugEnabled()) {
                          log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass = {}", dvmClass.getClassName(), superClass.getClassName());
+
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java b/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
+index c807922..4f513b4 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
+@@ -137,6 +137,25 @@ public class NetLinkSocket extends SocketIO implements FileIO {
+                 throw new IllegalStateException(e);
+             }
+         }
++        // Fallback for netlink message types we do not synthesize a full
++        // response for (e.g. RTM_GETROUTE=0x1a): reply with a single
++        // NLMSG_DONE so the caller sees an empty dump and keeps running,
++        // instead of throwing and dropping unidbg into the debugger.
++        final short NLMSG_DONE = 0x3;
++        ByteBuffer done = ByteBuffer.allocate(20);
++        done.order(ByteOrder.LITTLE_ENDIAN);
++        done.putInt(20);            // nlmsg_len
++        done.putShort(NLMSG_DONE);  // nlmsg_type
++        done.putShort(NLM_F_MULTI); // nlmsg_flags
++        done.putInt(netlinkSeq);    // nlmsg_seq
++        done.putInt(emulator.getPid()); // nlmsg_pid
++        done.putInt(0);             // payload: error code 0
++        byte[] doneMsg = done.array();
++        if (count >= doneMsg.length) {
++            buffer.write(0, doneMsg, 0, doneMsg.length);
++            this.netlinkType = -1;
++            return doneMsg.length;
++        }
+         throw new UnsupportedOperationException("buffer=" + buffer + ", count=" + count + ", netlinkType=0x" + Integer.toHexString(netlinkType));
+     }
+ 
