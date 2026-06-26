@@ -129,7 +129,47 @@ public class MetasecDump extends AbstractJni {
                     ret == null ? "null" : ret.getValue());
             return ret;
         }
+        // Settings.{System,Secure,Global}.getString(resolver, key[, ...]) used during
+        // device fingerprinting. We have no real device, so answer with an empty string
+        // (the values feed freshly-generated headers; the server validates those, not the
+        // exact fingerprint bytes), keeping the native running instead of crashing.
+        if (signature.startsWith("android/provider/Settings$System->getString(")
+                || signature.startsWith("android/provider/Settings$Secure->getString(")
+                || signature.startsWith("android/provider/Settings$Global->getString(")) {
+            return new StringObject(vm, "");
+        }
         return super.callStaticObjectMethodV(vm, dvmClass, signature, vaList);
+    }
+
+    @Override
+    public DvmObject<?> getStaticObjectField(BaseVM vm, DvmClass dvmClass, String signature) {
+        // Settings.* String name constants (e.g. SCREEN_BRIGHTNESS) that the library reads
+        // for device fingerprinting. unidbg has no value for these, so return the well-known
+        // setting key strings so the subsequent ContentResolver lookup has a sane key.
+        switch (signature) {
+            case "android/provider/Settings$System->SCREEN_BRIGHTNESS:Ljava/lang/String;":
+                return new StringObject(vm, "screen_brightness");
+            case "android/provider/Settings$System->SCREEN_BRIGHTNESS_MODE:Ljava/lang/String;":
+                return new StringObject(vm, "screen_brightness_mode");
+            case "android/provider/Settings$System->SCREEN_OFF_TIMEOUT:Ljava/lang/String;":
+                return new StringObject(vm, "screen_off_timeout");
+            case "android/provider/Settings$Secure->ANDROID_ID:Ljava/lang/String;":
+                return new StringObject(vm, "android_id");
+            default:
+                return super.getStaticObjectField(vm, dvmClass, signature);
+        }
+    }
+
+    @Override
+    public int callStaticIntMethodV(BaseVM vm, DvmClass dvmClass, String signature, VaList vaList) {
+        // Settings.{System,Secure,Global}.getInt(resolver, key[, def]) -> return a plausible
+        // default (also avoids SettingNotFoundException for the no-default overload).
+        if (signature.startsWith("android/provider/Settings$System->getInt(")
+                || signature.startsWith("android/provider/Settings$Secure->getInt(")
+                || signature.startsWith("android/provider/Settings$Global->getInt(")) {
+            return 102;
+        }
+        return super.callStaticIntMethodV(vm, dvmClass, signature, vaList);
     }
 
     /** Manually bind a native method to a function pointer (the library declines to
