@@ -1,0 +1,107 @@
+[
+{
+  "name":"com.github.unidbg.file.linux.StatStructure",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.linux.android.dvm.DvmClass",
+  "fields":[{"name":"nativesMap"}]}
+,
+{
+  "name":"com.github.unidbg.linux.signal.SigAction",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.linux.signal.SigAction64",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.linux.struct.Stat64",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.linux.thread.PThreadInternal",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.linux.thread.PThreadInternal64",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.pointer.UnidbgStructure",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.unix.struct.TimeSpec",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.github.unidbg.unix.struct.TimeSpec64",
+  "allDeclaredFields":true,
+  "queryAllPublicConstructors":true,
+  "methods":[{"name":"<init>","parameterTypes":["com.sun.jna.Pointer"] }]}
+,
+{
+  "name":"com.github.unidbg.unix.struct.TimeVal64",
+  "allDeclaredFields":true}
+,
+{
+  "name":"com.sun.jna.CallbackProxy",
+  "queriedMethods":[{"name":"callback","parameterTypes":["java.lang.Object[]"] }]}
+,
+{
+  "name":"com.sun.jna.Structure",
+  "fields":[{"name":"structFields"}]}
+,
+{
+  "name":"com.sun.jna.Structure$FFIType",
+  "allDeclaredFields":true,
+  "queryAllPublicConstructors":true,
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"com.sun.jna.Structure$FFIType$size_t",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"com.sun.jna.ptr.IntByReference",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"com.sun.jna.ptr.PointerByReference",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"com.sun.jna.win32.DLLCallback"}
+,
+{
+  "name":"java.lang.Throwable",
+  "queriedMethods":[{"name":"addSuppressed","parameterTypes":["java.lang.Throwable"] }]}
+,
+{
+  "name":"java.lang.reflect.Method",
+  "queriedMethods":[{"name":"isVarArgs","parameterTypes":[] }]}
+,
+{
+  "name":"java.nio.Buffer"}
+,
+{
+  "name":"java.security.MessageDigestSpi"}
+,
+{
+  "name":"keystone.natives.DirectMappingKeystoneNative",
+  "queryAllDeclaredMethods":true}
+,
+{
+  "name":"sun.security.provider.SHA",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"sun.security.provider.SecureRandom",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+,
+{
+  "name":"sun.security.provider.Sun",
+  "methods":[{"name":"<init>","parameterTypes":[] }]}
+
+]

@@ -1,0 +1,50 @@
+// =====================================================================
+//  ZKM Script —— 混淆保护 MetasecDump（unidbg 签名 harness）
+//  已在 ZKM 24 实测通过：可成功混淆，混淆后仍能产出 6 个签名头。
+//  运行方式（在 full\ 目录下）：
+//     java -jar "C:\path\to\ZKM 24.jar" zkm\script.zkm
+//  注意：从 full\ 目录运行，下面的相对路径(deps、MetasecDump.jar)才成立。
+// =====================================================================
+
+// --- 1) classpath：供 ZKM 解析引用（不混淆、不改名、不打进输出） ---
+//   关键：ZKM 的多条 classpath 语句是“互相覆盖”而非“追加”，
+//   所以必须写成【一条】classpath 语句、用多个引号串列出。
+//   * 第一行 rt.jar 改成你本机 JDK8 的 jre\lib\rt.jar（唯一必改项）。
+//   * deps/*.jar 用通配符一次性纳入全部 unidbg/jna/fastjson 依赖。
+//   * Windows 路径用正斜杠 / （反斜杠在 ZKM 字符串里可能被当转义）。
+classpath "C:/Program Files/Eclipse Adoptium/jdk-8.0.472.8-hotspot/jre/lib/rt.jar"
+          "deps/*.jar";
+
+// --- 2) open：指定【要混淆】的 jar（含 MetasecDump 及其 10 个内部类） ---
+open "MetasecDump.jar";
+
+// --- 3) 名字保护：所有类名/方法名/字段名都“不改名”（零破坏，最稳） ---
+//   ZKM 的 exclude 不是 `class X { }` 花括号块，而是用 and 连接的“排除参数”。
+//   本 jar 的类都在【默认包】(无包名)，按官方文档：
+//     `*`      = 默认包里的所有类名
+//     `* *`    = 这些类的所有字段名
+//     `* *(*)` = 这些类的所有方法名
+//   exclude 只关“改名/裁剪”，不影响下面的控制流混淆与字符串加密。
+exclude * and
+        * * and
+        * *(*);
+
+// --- 3b) 控制流混淆的“例外”：这 3 个方法 ZKM 的流分析器无法处理 ---
+//   （main 和两个 VaList 版 JNI 分发方法，aggressive/normal 都会报
+//    "Inconsistent stack heights / Stack mismatch"）。
+//   把它们从“控制流混淆”里排除，其余方法照常做 aggressive 流混淆。
+//   注意：这 3 个方法仍然会被【字符串加密】，只是不做控制流平坦化。
+obfuscateFlowExclude * main(java.lang.String[]);
+obfuscateFlowExclude * callObjectMethodV(com.github.unidbg.linux.android.dvm.BaseVM, com.github.unidbg.linux.android.dvm.DvmObject, java.lang.String, com.github.unidbg.linux.android.dvm.VaList);
+obfuscateFlowExclude * callStaticObjectMethodV(com.github.unidbg.linux.android.dvm.BaseVM, com.github.unidbg.linux.android.dvm.DvmClass, java.lang.String, com.github.unidbg.linux.android.dvm.VaList);
+
+// --- 4) 真正的保护：激进控制流混淆 + 最强档字符串加密 ---
+obfuscate
+    obfuscateFlow         = aggressive      // 控制流平坦化（ZKM 杀手锏）
+    encryptStringLiterals = flowObfuscate   // 字符串字面量加密（与流混淆绑定，最强）
+    lineNumbers           = delete          // 删行号表，反编译更难对应源码
+    localVariables        = delete          // 删局部变量名
+    ;
+
+// --- 5) 输出混淆后的 jar ---
+saveAll "MetasecDump-obf.jar";
