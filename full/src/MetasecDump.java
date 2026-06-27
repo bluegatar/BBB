@@ -1,5 +1,6 @@
 import com.github.unidbg.AndroidEmulator;
 import com.github.unidbg.Module;
+import com.github.unidbg.arm.backend.DynarmicFactory;
 import com.github.unidbg.arm.backend.Unicorn2Factory;
 import com.github.unidbg.linux.android.AndroidEmulatorBuilder;
 import com.github.unidbg.linux.android.AndroidResolver;
@@ -17,6 +18,7 @@ import com.github.unidbg.memory.Memory;
 
 import java.io.File;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Environment-supplement harness for libmetasec_ml.so.
@@ -684,15 +686,28 @@ public class MetasecDump extends AbstractJni {
     }
 
     public static void main(String[] args) throws Exception {
-        AndroidEmulator emulator = AndroidEmulatorBuilder.for64Bit()
-                .setProcessName("com.phoenix.read")
-                .addBackendFactory(new Unicorn2Factory(true))
-                .build();
+        // Backend: dynarmic by default. The unicorn2 backend intermittently dies with a native
+        // EXCEPTION_ACCESS_VIOLATION inside unicorn.dll (both mid-sign and at emulator.close()),
+        // especially under load; dynarmic has no such crash, exits cleanly, and is faster. Override
+        // with -Dbackend=unicorn (which also re-enables the instruction-count preemptive hook).
+        String backend = System.getProperty("backend", "dynarmic");
+        AndroidEmulatorBuilder builder = AndroidEmulatorBuilder.for64Bit();
+        builder.setProcessName("com.phoenix.read");
+        if ("unicorn".equalsIgnoreCase(backend)) {
+            builder.addBackendFactory(new Unicorn2Factory(true));
+        } else {
+            builder.addBackendFactory(new DynarmicFactory(true));
+        }
+        System.out.println("==== backend=" + backend + " ====");
+        AndroidEmulator emulator = builder.build();
         emulator.getSyscallHandler().setEnableThreadDispatcher(true);
         // preemptive thread switching: switch threads every N instructions so the
         // worker threads spawned in JNI_OnLoad interleave with the main thread and
         // complete the lazy RegisterNatives of y2.a (canonical unidbg ThreadTest pattern).
-        emulator.getBackend().registerEmuCountHook(100000);
+        // Only the unicorn backend supports an instruction-count hook; dynarmic does not.
+        if ("unicorn".equalsIgnoreCase(backend)) {
+            emulator.getBackend().registerEmuCountHook(100000);
+        }
         Memory memory = emulator.getMemory();
         memory.setLibraryResolver(new AndroidResolver(23));
 
@@ -713,9 +728,14 @@ public class MetasecDump extends AbstractJni {
 
         System.out.println("==== calling JNI_OnLoad ====");
         dm.callJNI_OnLoad(emulator);
-        System.out.println("==== JNI_OnLoad done; pumping worker threads ====");
+        // Pump the worker threads spawned in JNI_OnLoad so they finish their lazy RegisterNatives /
+        // device-data init before we sign. ~1s is enough for them to settle (verified byte-identical
+        // signatures vs longer pumps); we use 2s as a safety margin for slower/loaded hosts. Skipping
+        // the pump entirely (pump<=0) produces a wrong X-Gorgon, so don't. Override with -Dpump.seconds.
+        int pumpSeconds = Integer.getInteger("pump.seconds", 2);
+        System.out.println("==== JNI_OnLoad done; pumping worker threads (" + pumpSeconds + "s) ====");
         try {
-            emulator.getThreadDispatcher().runThreads(15, java.util.concurrent.TimeUnit.SECONDS);
+            emulator.getThreadDispatcher().runThreads(pumpSeconds, TimeUnit.SECONDS);
         } catch (Throwable t) {
             System.out.println("[runThreads] " + t);
         }
