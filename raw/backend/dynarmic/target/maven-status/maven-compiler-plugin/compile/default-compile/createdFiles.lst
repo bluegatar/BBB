@@ -1,0 +1,8 @@
+com\github\unidbg\arm\backend\dynarmic\DynarmicBackend32.class
+com\github\unidbg\arm\backend\dynarmic\Dynarmic.class
+com\github\unidbg\arm\backend\dynarmic\EventMemHookNotifier.class
+com\github\unidbg\arm\backend\DynarmicBackend.class
+com\github\unidbg\arm\backend\dynarmic\DynarmicException.class
+com\github\unidbg\arm\backend\dynarmic\DynarmicBackend64.class
+com\github\unidbg\arm\backend\DynarmicFactory.class
+com\github\unidbg\arm\backend\dynarmic\DynarmicCallback.class

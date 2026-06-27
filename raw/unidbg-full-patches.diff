@@ -1,0 +1,134 @@
+# unidbg source patches for libmetasec_ml.so environment emulation
+# Base (original unidbg commit): 096c1c49392483d6de9a72de60f61c461b4baaf6  Fix path traversal vulnerability in BaseFileSystem - reject guest paths that esc
+# Repo: https://github.com/zhkl0228/unidbg
+# Generated: 2026-06-26T20:20:29Z
+#
+# 6 patches across 5 files. Apply with:  git apply unidbg-full-patches.diff  (run from unidbg repo root)
+#
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
+index eaeea8b..429df6a 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidElfLoader.java
+@@ -71,7 +71,8 @@ public class AndroidElfLoader extends AbstractLoader<AndroidFileIO> implements M
+                 "ANDROID_DATA=/data",
+                 "ANDROID_ROOT=/system",
+                 "PATH=/sbin:/vendor/bin:/system/sbin:/system/bin:/system/xbin",
+-                "NO_ADDR_COMPAT_LAYOUT_FIXUP=1"
++                "NO_ADDR_COMPAT_LAYOUT_FIXUP=1",
++                "28d7fdd567361198183fa7b8e=a7"
+         });
+         this.setErrno(0);
+     }
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
+index 97b783a..fdffd67 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/AndroidSyscallHandler.java
+@@ -323,6 +323,11 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+                 if (threadDispatcherEnabled && runningTask != null) {
+                     if (timeSpec == null) {
+                         runningTask.setWaiter(emulator, new FutexIndefinitelyWaiter(uaddr, val));
++                    } else if (timeSpec.toMillis() <= 0) {
++                        // Sub-millisecond / already-elapsed relative timeout: TimeSpec.toMillis()
++                        // truncates sub-1ms nanoseconds to 0, and FutexNanoSleepWaiter throws on a
++                        // non-positive wait. Treat it as an immediate timeout instead of crashing.
++                        throw new ThreadContextSwitchException().setReturnValue(-ETIMEDOUT);
+                     } else {
+                         runningTask.setWaiter(emulator, new FutexNanoSleepWaiter(uaddr, val, timeSpec));
+                     }
+@@ -708,6 +713,15 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+         return 0;
+     }
+ 
++    @Override
++    protected long currentTimeMillis() {
++        String fake = System.getProperty("unidbg.fake.time.ms");
++        if (fake != null && !fake.isEmpty()) {
++            return Long.parseLong(fake);
++        }
++        return super.currentTimeMillis();
++    }
++
+     protected int tgkill(Emulator<?> emulator) {
+         RegisterContext context = emulator.getContext();
+         int tgid = context.getIntArg(0);
+@@ -723,6 +737,9 @@ public abstract class AndroidSyscallHandler extends UnixSyscallHandler<AndroidFi
+             return -UnixEmulator.EINVAL;
+         }
+         SigAction action = sigActionMap.get(sig);
++        if ("true".equals(System.getProperty("unidbg.tgkill.drop"))) {
++            return 0;
++        }
+         if (threadDispatcherEnabled &&
+                 emulator.getThreadDispatcher().sendSignal(tid, sig, action == null || action.getSaHandler() == 0L ? null : new SignalTask(sig, action))) {
+             throw new ThreadContextSwitchException().setReturnValue(0);
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java b/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
+index 00018da..b06e2d7 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/android/dvm/DalvikVM64.java
+@@ -138,14 +138,14 @@ public class DalvikVM64 extends BaseVM implements VM {
+                 }
+                 if (dvmClass.getClassName().equals("java/lang/Object")) {
+                     log.debug("JNIEnv->GetSuperClass was called, class = {} According to Java Native Interface Specification, If clazz specifies the class Object, returns NULL.", dvmClass.getClassName());
+-                    throw new BackendException();
++                    return 0;
+                 }
+                 DvmClass superClass = dvmClass.getSuperclass();
+                 if (superClass == null) {
+                     if (log.isDebugEnabled()) {
+                         log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass get failed.", dvmClass.getClassName());
+                     }
+-                    throw new BackendException();
++                    return 0;
+                 } else {
+                     if (log.isDebugEnabled()) {
+                         log.debug("JNIEnv->GetSuperClass was called, class = {}, superClass = {}", dvmClass.getClassName(), superClass.getClassName());
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java b/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
+index c807922..4f513b4 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/file/NetLinkSocket.java
+@@ -137,6 +137,25 @@ public class NetLinkSocket extends SocketIO implements FileIO {
+                 throw new IllegalStateException(e);
+             }
+         }
++        // Fallback for netlink message types we do not synthesize a full
++        // response for (e.g. RTM_GETROUTE=0x1a): reply with a single
++        // NLMSG_DONE so the caller sees an empty dump and keeps running,
++        // instead of throwing and dropping unidbg into the debugger.
++        final short NLMSG_DONE = 0x3;
++        ByteBuffer done = ByteBuffer.allocate(20);
++        done.order(ByteOrder.LITTLE_ENDIAN);
++        done.putInt(20);            // nlmsg_len
++        done.putShort(NLMSG_DONE);  // nlmsg_type
++        done.putShort(NLM_F_MULTI); // nlmsg_flags
++        done.putInt(netlinkSeq);    // nlmsg_seq
++        done.putInt(emulator.getPid()); // nlmsg_pid
++        done.putInt(0);             // payload: error code 0
++        byte[] doneMsg = done.array();
++        if (count >= doneMsg.length) {
++            buffer.write(0, doneMsg, 0, doneMsg.length);
++            this.netlinkType = -1;
++            return doneMsg.length;
++        }
+         throw new UnsupportedOperationException("buffer=" + buffer + ", count=" + count + ", netlinkType=0x" + Integer.toHexString(netlinkType));
+     }
+ 
+diff --git a/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java b/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
+index f0e2048..9aea079 100644
+--- a/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
++++ b/unidbg-android/src/main/java/com/github/unidbg/linux/thread/FutexNanoSleepWaiter.java
+@@ -15,12 +15,10 @@ public class FutexNanoSleepWaiter extends FutexWaiter {
+     public FutexNanoSleepWaiter(Pointer uaddr, int val, TimeSpec timeSpec) {
+         super(uaddr, val);
+ 
+-        this.waitMillis = timeSpec.toMillis();
++        // A sub-millisecond relative timeout truncates to 0 here; clamp to 0 so canDispatch()
++        // reports an immediate timeout instead of throwing IllegalStateException.
++        this.waitMillis = Math.max(0L, timeSpec.toMillis());
+         this.startWaitTimeInMillis = System.currentTimeMillis();
+-
+-        if (this.waitMillis <= 0) {
+-            throw new IllegalStateException();
+-        }
+     }
+ 
+     @Override
