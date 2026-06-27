@@ -1,0 +1,24 @@
+[
+  {
+    "name": "com.github.unidbg.arm.backend.dynarmic.DynarmicCallback",
+    "methods": [
+      { "name": "callSVC", "parameterTypes": ["long", "int"] },
+      { "name": "handleInterpreterFallback", "parameterTypes": ["long", "int"] },
+      { "name": "handleExceptionRaised", "parameterTypes": ["long", "int"] },
+      { "name": "handleMemoryReadFailed", "parameterTypes": ["long", "int"] },
+      { "name": "handleMemoryWriteFailed", "parameterTypes": ["long", "int"] }
+    ]
+  },
+  {
+    "name": "com.github.unidbg.arm.backend.dynarmic.DynarmicException",
+    "methods": [
+      { "name": "<init>", "parameterTypes": [] },
+      { "name": "<init>", "parameterTypes": ["java.lang.String"] }
+    ]
+  },
+  { "name": "com.github.unidbg.arm.backend.dynarmic.Dynarmic", "allDeclaredMethods": true, "allDeclaredFields": true, "allDeclaredConstructors": true },
+  { "name": "com.github.unidbg.arm.backend.dynarmic.DynarmicBackend", "allDeclaredMethods": true, "allDeclaredFields": true },
+  { "name": "com.github.unidbg.arm.backend.dynarmic.DynarmicBackend64", "allDeclaredMethods": true, "allDeclaredFields": true },
+  { "name": "com.github.unidbg.arm.backend.dynarmic.DynarmicBackend32", "allDeclaredMethods": true, "allDeclaredFields": true },
+  { "name": "com.github.unidbg.arm.backend.dynarmic.EventMemHookNotifier", "allDeclaredMethods": true, "allDeclaredFields": true }
+]
