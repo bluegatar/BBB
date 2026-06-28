@@ -40,6 +40,14 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 IS_WINDOWS = platform.system().lower().startswith("win")
 
+# 控制台默认编码(如 Windows 的 cp1252/gbk)可能无法输出中文，导致 print 抛 UnicodeEncodeError。
+# 统一把 stdout/stderr 切到 utf-8 且对无法编码的字符做替换，确保任何分支的打印都不会中断流程。
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # --- 内置 JRE：优先用 jre/，没有就退回 PATH 上的 java ---
 _JAVA = os.path.join(HERE, "jre", "bin", "java.exe" if IS_WINDOWS else "java")
 JAVA = _JAVA if os.path.exists(_JAVA) else ("java.exe" if IS_WINDOWS else "java")
