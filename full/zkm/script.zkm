@@ -41,6 +41,7 @@ obfuscateFlowExclude * callStaticObjectMethodV(com.github.unidbg.linux.android.d
 // --- 4) 真正的保护：激进控制流混淆 + 最强档字符串加密 ---
 obfuscate
     obfuscateFlow         = aggressive      // 控制流平坦化（ZKM 杀手锏）
+    exceptionObfuscation  = heavy           // 插入伪异常处理器，搅乱异常表，反编译器更难还原 try/catch
     encryptStringLiterals = flowObfuscate   // 字符串字面量加密（与流混淆绑定，最强）
     lineNumbers           = delete          // 删行号表，反编译更难对应源码
     localVariables        = delete          // 删局部变量名
