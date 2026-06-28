@@ -4,24 +4,30 @@
 绿色版 metasec 签名器 —— 解压即用，无需安装 Java / Maven / 联网。
 
 它做什么：
-  1. 用【内置的 JRE】(jre/) 驱动【混淆后的 MetasecDump-obf.jar】+ unidbg 依赖(deps/)
-     在本地模拟执行 libs/libmetasec_ml.so，对给定 video_id 生成 6 个抖音/番茄安全头：
-        x-argus / x-gorgon / x-helios / x-khronos / x-ladon / x-medusa
-  2. 把"请求 URL + body + 6 个签名头 + x-ss-stub"等结果写入  <video_id>.json 。
-  3. (可选) 加 --send 还会用这些头真实 POST 到番茄服务端，并把服务端响应一起写进 json。
+  用【内置的 JRE】(jre/) 驱动【混淆后的 MetasecDump-obf.jar】+ unidbg 依赖(deps/)
+  在本地模拟执行 libs/libmetasec_ml.so，对给定 url+body 生成 6 个番茄/抖音安全头：
+      x-argus / x-gorgon / x-helios / x-khronos / x-ladon / x-medusa
+  并把"请求 URL + body + 6 个签名头 + x-ss-stub + 完整请求头"写进 json。
+
+支持两条接口（默认两条都跑）：
+  * video_model (play)  —— 传 --video-id，取播放地址，输出 <video_id>.video_model.json
+  * video_detail        —— 传 --series-id，取详情，输出 <series_id>.video_detail.json
+                           （按抓包，video_detail 的 body 走 gzip + content-encoding: gzip）
 
 用法（解压后在本目录运行）：
-    python run.py                              # 用默认 video_id，离线生成签名 json
-    python run.py --video-id 7650889194310470681
-    python run.py --video-id 7650889194310470681 --send   # 额外发真实请求(需要 httpx + 有效 cookie)
+    python run.py                                   # 用默认 id，两条接口都离线生成 json
+    python run.py --video-id 7650889194310470681 --series-id 7650887007270341694
+    python run.py --api detail --series-id 7650887007270341694
+    python run.py --api both --send                 # 额外用签名头真实 POST(需 httpx + 有效 cookie)
 
 注意：
-  * 默认【离线】只生成签名 json，不联网、不需要第三方库，一定能出 <video_id>.json。
-  * --send 需要 `pip install httpx[http2] brotli`，且服务端 cookie 未过期才会返回有效数据。
+  * 默认【离线】只生成签名 json，不联网、不需要第三方库，一定能出 json。
+  * --send 需要 `pip install "httpx[http2]" brotli`，且服务端 cookie 未过期才会返回有效数据。
   * 本目录结构不要改名：jre/  deps/  libs/  MetasecDump-obf.jar  都要在同一目录。
 """
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -43,7 +49,8 @@ DEPS_GLOB = os.path.join(HERE, "deps", "*")
 SO_PATH = os.path.join(HERE, "libs", "libmetasec_ml.so")
 
 HOST = "api5-normal-sinfonlinea.fqnovel.com"
-PATH = "/novel/player/video_model/v1/"
+PATH_PLAY = "/novel/player/video_model/v1/"
+PATH_DETAIL = "/novel/player/video_detail/v1/"
 
 QUERY_PARAMS = {
     "iid": "1518852408614281", "device_id": "1518852408610185", "ac": "wifi",
@@ -70,15 +77,19 @@ COOKIES = [
                 "9072d7e4c3239d9c184edfc34a0e9139"),
 ]
 
+# video_detail 抓包里固定的图片裁剪参数（base64，按原样保留，含换行）
+_IMG_SHRINK = ("W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjEwNzgsInNocmlua190eXBlIjozfSx7Imlt"
+               "\nYWdlX3R5cGUiOjQsImltYWdlX3dpZHRoIjo5OSwic2hyaW5rX3R5cGUiOjR9XQ==\n")
 
-def build_url(rticket_ms: int) -> str:
+
+def build_url(path: str, rticket_ms: int) -> str:
     params = dict(QUERY_PARAMS)
     params["_rticket"] = str(rticket_ms)
     qs = "&".join(f"{k}={v}" for k, v in params.items())
-    return f"https://{HOST}{PATH}?{qs}"
+    return f"https://{HOST}{path}?{qs}"
 
 
-def build_body(video_id: str) -> str:
+def build_play_body(video_id: str) -> str:
     body = {
         "biz_param": {
             "detail_page_version": 0, "device_level": 2, "disable_digg_stat": False,
@@ -91,21 +102,35 @@ def build_body(video_id: str) -> str:
     return json.dumps(body, separators=(",", ":"))
 
 
+def build_detail_body(series_id: str) -> str:
+    body = {
+        "biz_param": {
+            "detail_page_version": 1, "disable_digg_stat": False,
+            "disable_video_relate_book": False, "image_shrink_datas_str": _IMG_SHRINK,
+            "need_all_video_definition": False, "need_mp4_align": False,
+            "screen_width_px": "1078", "source": 5, "use_os_player": False,
+            "use_server_dns": False, "video_id_type": 1,
+        },
+        "series_id": series_id,
+    }
+    return json.dumps(body, separators=(",", ":"))
+
+
 def gen_trace_id() -> str:
     a = "%032x" % random.getrandbits(128)
     b = "%016x" % random.getrandbits(64)
     return f"00-{a}-{b}-01"
 
 
-def run_harness(url: str, body: str, pump: int) -> dict:
-    """用内置 JRE 驱动混淆后的 jar，返回解析出的 6 个安全头。"""
+def run_harness(url: str, body: str, pump: int, tag: str) -> dict:
+    """用内置 JRE 驱动混淆后的 jar，对 url+body 返回解析出的 6 个安全头。"""
     if not os.path.exists(OBF_JAR):
         raise RuntimeError("missing MetasecDump-obf.jar next to run.py")
     if not os.path.exists(SO_PATH):
         raise RuntimeError("missing libs/libmetasec_ml.so")
 
-    url_file = os.path.join(HERE, ".req_url.txt")
-    body_file = os.path.join(HERE, ".req_body.txt")
+    url_file = os.path.join(HERE, f".req_url_{tag}.txt")
+    body_file = os.path.join(HERE, f".req_body_{tag}.txt")
     with open(url_file, "w", encoding="utf-8") as f:
         f.write(url)
     with open(body_file, "w", encoding="utf-8") as f:
@@ -123,7 +148,7 @@ def run_harness(url: str, body: str, pump: int) -> dict:
         "-cp", classpath,
         "MetasecDump",
     ]
-    print("[*] driving unidbg harness with bundled JRE (~3-6s) ...", flush=True)
+    print(f"[*] [{tag}] driving unidbg harness with bundled JRE (~3-6s) ...", flush=True)
     proc = subprocess.run(cmd, cwd=HERE, stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, timeout=600)
     out = proc.stdout.decode("utf-8", "replace")
@@ -133,12 +158,13 @@ def run_harness(url: str, body: str, pump: int) -> dict:
             line = ln[len("__HEADERS_JSON__"):]
     if not line:
         sys.stderr.write(out[-3000:] + "\n")
-        raise RuntimeError("harness did not emit __HEADERS_JSON__ (see log above)")
+        raise RuntimeError(f"[{tag}] harness did not emit __HEADERS_JSON__ (see log above)")
     headers = json.loads(line)
     return {k.lower(): v for k, v in headers.items()}
 
 
-def assemble_headers(sec: dict, rticket_ms: int, body: str):
+def assemble_headers(sec: dict, rticket_ms: int, body: str, gzip_body: bool):
+    """组装完整请求头。x-ss-stub = md5(未压缩 body)；gzip_body=True 时加 content-encoding: gzip。"""
     req_ticket = str(rticket_ms + 8)
     reading_req = f"{req_ticket}-{random.randint(10**9, 2*10**9)}"
     stub = hashlib.md5(body.encode("utf-8")).hexdigest().upper()
@@ -151,6 +177,10 @@ def assemble_headers(sec: dict, rticket_ms: int, body: str):
         ("x-vc-bdturing-sdk-version", "4.0.3.cn"), ("lc", "101"), ("sdk-version", "2"),
         ("passport-sdk-version", "5051452"),
         ("content-type", "application/json; charset=utf-8"),
+    ]
+    if gzip_body:
+        headers.append(("content-encoding", "gzip"))
+    headers += [
         ("x-ss-stub", stub), ("x-tt-store-region", "cn-sc"),
         ("x-tt-store-region-src", "did"), ("x-ss-dp", "8662"),
         ("x-tt-trace-id", gen_trace_id()),
@@ -167,7 +197,7 @@ def assemble_headers(sec: dict, rticket_ms: int, body: str):
 
 
 def decode_response(raw: bytes) -> str:
-    import gzip, io
+    import io
     try:
         s = raw.decode("utf-8")
         if s.lstrip().startswith("{"):
@@ -186,31 +216,21 @@ def decode_response(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def main():
-    ap = argparse.ArgumentParser(description="绿色版 metasec 签名器")
-    ap.add_argument("--video-id", default="7650889194310470681")
-    ap.add_argument("--pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
-    ap.add_argument("--send", action="store_true",
-                    help="额外用签名头真实 POST 到服务端(需要 httpx + 有效 cookie)")
-    ap.add_argument("--out", default=None, help="输出 json 路径(默认 <video_id>.json)")
-    args = ap.parse_args()
-
+def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
+             pump: int, gzip_body: bool, send: bool, out_path: str):
+    """对单条接口：生成签名头 -> 组装请求头 -> 写 json (-> 可选真实发送)。"""
     rticket_ms = int(time.time() * 1000)
-    url = build_url(rticket_ms)
-    body = build_body(args.video_id)
-    out_path = args.out or os.path.join(HERE, f"{args.video_id}.json")
-
-    print(f"[*] java     = {JAVA}")
-    print(f"[*] video_id = {args.video_id}")
-
-    sec = run_harness(url, body, args.pump)
-    headers, stub = assemble_headers(sec, rticket_ms, body)
+    url = build_url(path, rticket_ms)
+    sec = run_harness(url, body, pump, api)
+    headers, stub = assemble_headers(sec, rticket_ms, body, gzip_body)
 
     result = {
-        "video_id": args.video_id,
+        "api": api,
+        ident_key: ident_val,
         "_rticket": rticket_ms,
         "url": url,
         "body": body,
+        "content_encoding": "gzip" if gzip_body else None,
         "x-ss-stub": stub,
         "security_headers": {
             "x-argus": sec["x-argus"], "x-gorgon": sec["x-gorgon"],
@@ -220,20 +240,21 @@ def main():
         "request_headers": dict(headers),
     }
 
-    print("\n[*] 6 security headers:")
+    print(f"\n[*] [{api}] 6 security headers:")
     for k in ("x-argus", "x-gorgon", "x-helios", "x-khronos", "x-ladon", "x-medusa"):
         print(f"      {k}: {sec.get(k)}")
 
-    if args.send:
+    if send:
         try:
             import httpx
         except ImportError:
             print("[!] --send 需要 httpx：pip install \"httpx[http2]\" brotli ；本次跳过发送。")
         else:
-            print(f"\n[*] POST https://{HOST}{PATH} (HTTP/2) ...", flush=True)
+            content = gzip.compress(body.encode("utf-8")) if gzip_body else body.encode("utf-8")
+            print(f"\n[*] [{api}] POST https://{HOST}{path} (HTTP/2"
+                  f"{', gzip body' if gzip_body else ''}) ...", flush=True)
             with httpx.Client(http2=True, timeout=30, verify=True) as client:
-                req = client.build_request("POST", url, headers=headers,
-                                           content=body.encode("utf-8"))
+                req = client.build_request("POST", url, headers=headers, content=content)
                 resp = client.send(req)
             text = decode_response(resp.content)
             result["response"] = {
@@ -242,13 +263,42 @@ def main():
                 "headers": dict(resp.headers),
                 "body": text,
             }
-            print(f"[*] HTTP {resp.http_version} status {resp.status_code}")
-            print("[*] response body (first 800 chars):")
+            print(f"[*] [{api}] HTTP {resp.http_version} status {resp.status_code}")
+            print(f"[*] [{api}] response body (first 800 chars):")
             print(text[:800])
 
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    print(f"\n[+] wrote {out_path}")
+    print(f"[+] [{api}] wrote {out_path}")
+    return result
+
+
+def main():
+    ap = argparse.ArgumentParser(description="绿色版 metasec 签名器（video_model + video_detail）")
+    ap.add_argument("--api", choices=["play", "detail", "both"], default="both",
+                    help="跑哪条接口：play=video_model, detail=video_detail, both=两条都跑(默认)")
+    ap.add_argument("--video-id", default="7650889194310470681", help="video_model(play) 的 video_id")
+    ap.add_argument("--series-id", default="7650887007270341694", help="video_detail 的 series_id")
+    ap.add_argument("--pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
+    ap.add_argument("--send", action="store_true",
+                    help="额外用签名头真实 POST 到服务端(需要 httpx + 有效 cookie)")
+    ap.add_argument("--out-play", default=None, help="play 输出 json 路径(默认 <video_id>.video_model.json)")
+    ap.add_argument("--out-detail", default=None, help="detail 输出 json 路径(默认 <series_id>.video_detail.json)")
+    args = ap.parse_args()
+
+    print(f"[*] java      = {JAVA}")
+
+    if args.api in ("play", "both"):
+        print(f"[*] video_id  = {args.video_id}")
+        out = args.out_play or os.path.join(HERE, f"{args.video_id}.video_model.json")
+        sign_one("play", PATH_PLAY, build_play_body(args.video_id),
+                 "video_id", args.video_id, args.pump, False, args.send, out)
+
+    if args.api in ("detail", "both"):
+        print(f"[*] series_id = {args.series_id}")
+        out = args.out_detail or os.path.join(HERE, f"{args.series_id}.video_detail.json")
+        sign_one("detail", PATH_DETAIL, build_detail_body(args.series_id),
+                 "series_id", args.series_id, args.pump, True, args.send, out)
 
 
 if __name__ == "__main__":
