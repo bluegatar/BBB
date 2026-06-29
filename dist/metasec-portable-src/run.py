@@ -61,33 +61,32 @@ PATH_PLAY = "/novel/player/video_model/v1/"
 PATH_DETAIL = "/novel/player/video_detail/v1/"
 PATH_SEARCH = "/reading/bookapi/search/tab/v"
 
-# search 是 GET、无 body、无 x-ss-stub。下面是抓包里 search/tab/v 的完整 query 原样保留，
-# build_search_url() 只把其中的【搜索词】和【_rticket】替换成本次的值，其余原样发送(签名按整串算)。
-_SEARCH_CAP_KW = "%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962"      # 抓包里的搜索词(“家里家外２”) url-encoded
-_SEARCH_CAP_RTICKET = "1782728427533"
+# search 是 GET、无 body、无 x-ss-stub。下面是“全新搜索（点搜索按钮、第一页）”的 query 模板：
+#   * {query}   = 本次搜索词(url-encoded)；由 build_search_url 填入
+#   * {rticket} = 本次时间戳(ms)；由 build_search_url 填入
+#   * last_search_page_query 留空(首次搜索)；offset=0、不带翻页/会话上下文(passback/last_book_id/
+#     last_chapter_id/search_id/corrected_query 等)，所以每次都是干净的一次新搜索。
+# query 串原样发送，签名按整串算。
 _SEARCH_RAW_Q = (
-    "bookshelf_search_plan=4&live_room_id=0&user_is_login=0&bookstore_tab=16&passback=6"
-    "&last_book_id=7577339455728520217&last_search_page_query=%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962"
-    "&clicked_content=default_search&use_lynx=false&tab_type=11&last_book_consume_time=54873"
-    "&product_id=0&line_words_num=0&tab_name=feed&last_consume_interval=10931&pad_column_cover=0"
-    "&last_chapter_id=7577341425084288062&only_feed=false&offset=6&from_rs=false&only_large_card=false"
-    "&query=%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962&count=0&target_main_id&search_source=1"
-    "&search_id=default%231782728417CB0034F2%230%23MQ%2311%402026062918202642BC070DE62A6EA9C5C2"
-    "&search_source_id=default%231782728417CB0034F2%230%23MQ%23&use_correct=true"
-    "&last_search_page_interval=183&seed_product_id=0&from_half_screen=false"
-    "&is_first_enter_search=false&corrected_query&iid=1518852408614281&device_id=1518852408610185"
+    "bookshelf_search_plan=4&live_room_id=0&user_is_login=0&bookstore_tab=16"
+    "&last_search_page_query=&clicked_content=page_search_button&report_info&use_lynx=false"
+    "&tab_type=11&last_book_consume_time=0&product_id=0&line_words_num=0&tab_name=feed"
+    "&last_consume_interval=0&pad_column_cover=0&only_feed=false&offset=0&from_rs=false"
+    "&only_large_card=false&query={query}&count=0&search_source=1&search_source_id=clks%23%23%23"
+    "&use_correct=false&last_search_page_interval=0&seed_product_id=0&from_half_screen=false"
+    "&is_first_enter_search=false&iid=1518852408614281&device_id=1518852408610185"
     "&ac=wifi&channel=huawei_8662_64&aid=8662&app_name=novelread&version_code=72432"
     "&version_name=7.2.4.32&device_platform=android&os=android&ssmix=a&device_type=23076RA4BC"
     "&device_brand=Redmi&language=zh&os_api=33&os_version=13&manifest_version_code=72432"
-    "&resolution=1080*2226&dpi=440&update_version_code=72432&_rticket=1782728427533"
-    "&normal_session_cnt_in_day=335&gender=2&cold_start_session_cnt_in_day=4&host_abi=arm64-v8a"
-    "&dragon_device_type=phone&sys_mini_window=1&pv_player=72432&app_mini_window=0"
-    "&normal_session_id=64048b42-613a-4e78-9ada-8286764b8be5%231&compliance_status=0&har_status=0"
-    "&cold_start_session_id=64b35a56-eaa9-4e1b-b75d-c99ea01a4a99&cold_start_session_cnt_in_life=61"
-    "&charging=1&normal_session_cnt_in_life=4270&is_power_save_mode=0&app_dark_mode=0"
-    "&screen_brightness=39&battery_pct=100&down_speed=41511&sys_dark_mode=0&need_personal_recommend=1"
+    "&resolution=1080*2226&dpi=440&update_version_code=72432&_rticket={rticket}"
+    "&normal_session_cnt_in_day=402&gender=2&cold_start_session_cnt_in_day=5&host_abi=arm64-v8a"
+    "&dragon_device_type=phone&sys_mini_window=0&pv_player=72432&app_mini_window=0"
+    "&normal_session_id=d0fe323e-1030-4dd8-a72f-11e141ce2c83%238&compliance_status=0&har_status=0"
+    "&cold_start_session_id=cca83779-c82f-4366-afc0-1980fff6181c&cold_start_session_cnt_in_life=62"
+    "&charging=0&normal_session_cnt_in_life=4337&is_power_save_mode=0&app_dark_mode=0"
+    "&screen_brightness=1&battery_pct=0&down_speed=34538&sys_dark_mode=0&need_personal_recommend=1"
     "&player_so_load=1&font_scale=100&is_android_pad_screen=0&network_type=4"
-    "&rom_version=miui_V140_V14.0.10.0.TMWEUXM&current_volume=13"
+    "&rom_version=miui_V140_V14.0.10.0.TMWEUXM&current_volume=1"
     "&cdid=6e297aec-fb86-48ed-98cc-289027ea46dd"
     "&client_ab_info=%7B%22middle_style_from_video%22%3Afalse%2C%22result_style_from_video%22%3Afalse%7D"
 )
@@ -159,8 +158,7 @@ def build_detail_body(series_id: str) -> str:
 def build_search_url(keyword: str, rticket_ms: int) -> str:
     from urllib.parse import quote
     kw = quote(keyword, safe="")
-    q = _SEARCH_RAW_Q.replace(_SEARCH_CAP_KW, kw)
-    q = q.replace("_rticket=" + _SEARCH_CAP_RTICKET, "_rticket=" + str(rticket_ms))
+    q = _SEARCH_RAW_Q.format(query=kw, rticket=rticket_ms)
     return f"https://{HOST}{PATH_SEARCH}?{q}"
 
 
