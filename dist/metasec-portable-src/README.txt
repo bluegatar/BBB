@@ -32,7 +32,10 @@
 
   3) 取 search 的 json（GET，关键词带空格/中文请用引号包起来）：
         python run.py -search "家里家外2"
-     → result.json
+     → result.json （默认 1 页，约 6 条）
+     # 想要更多结果就翻页合并（每页约 6~10 条，需发送才能翻页）：
+        python run.py -search "家里家外2" -pages 5
+     → result.json 里 items 是合并去重后的完整列表，pages 里保留每页原始请求/响应
 
   4) 只本地生成签名 json、不发请求（纯离线，不需第三方库）：
         python run.py -vid 7650889194310470681 -nosend
