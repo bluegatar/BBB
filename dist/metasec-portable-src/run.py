@@ -59,6 +59,38 @@ SO_PATH = os.path.join(HERE, "libs", "libmetasec_ml.so")
 HOST = "api5-normal-sinfonlinea.fqnovel.com"
 PATH_PLAY = "/novel/player/video_model/v1/"
 PATH_DETAIL = "/novel/player/video_detail/v1/"
+PATH_SEARCH = "/reading/bookapi/search/tab/v"
+
+# search 是 GET、无 body、无 x-ss-stub。下面是抓包里 search/tab/v 的完整 query 原样保留，
+# build_search_url() 只把其中的【搜索词】和【_rticket】替换成本次的值，其余原样发送(签名按整串算)。
+_SEARCH_CAP_KW = "%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962"      # 抓包里的搜索词(“家里家外２”) url-encoded
+_SEARCH_CAP_RTICKET = "1782728427533"
+_SEARCH_RAW_Q = (
+    "bookshelf_search_plan=4&live_room_id=0&user_is_login=0&bookstore_tab=16&passback=6"
+    "&last_book_id=7577339455728520217&last_search_page_query=%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962"
+    "&clicked_content=default_search&use_lynx=false&tab_type=11&last_book_consume_time=54873"
+    "&product_id=0&line_words_num=0&tab_name=feed&last_consume_interval=10931&pad_column_cover=0"
+    "&last_chapter_id=7577341425084288062&only_feed=false&offset=6&from_rs=false&only_large_card=false"
+    "&query=%E5%AE%B6%E9%87%8C%E5%AE%B6%E5%A4%962&count=0&target_main_id&search_source=1"
+    "&search_id=default%231782728417CB0034F2%230%23MQ%2311%402026062918202642BC070DE62A6EA9C5C2"
+    "&search_source_id=default%231782728417CB0034F2%230%23MQ%23&use_correct=true"
+    "&last_search_page_interval=183&seed_product_id=0&from_half_screen=false"
+    "&is_first_enter_search=false&corrected_query&iid=1518852408614281&device_id=1518852408610185"
+    "&ac=wifi&channel=huawei_8662_64&aid=8662&app_name=novelread&version_code=72432"
+    "&version_name=7.2.4.32&device_platform=android&os=android&ssmix=a&device_type=23076RA4BC"
+    "&device_brand=Redmi&language=zh&os_api=33&os_version=13&manifest_version_code=72432"
+    "&resolution=1080*2226&dpi=440&update_version_code=72432&_rticket=1782728427533"
+    "&normal_session_cnt_in_day=335&gender=2&cold_start_session_cnt_in_day=4&host_abi=arm64-v8a"
+    "&dragon_device_type=phone&sys_mini_window=1&pv_player=72432&app_mini_window=0"
+    "&normal_session_id=64048b42-613a-4e78-9ada-8286764b8be5%231&compliance_status=0&har_status=0"
+    "&cold_start_session_id=64b35a56-eaa9-4e1b-b75d-c99ea01a4a99&cold_start_session_cnt_in_life=61"
+    "&charging=1&normal_session_cnt_in_life=4270&is_power_save_mode=0&app_dark_mode=0"
+    "&screen_brightness=39&battery_pct=100&down_speed=41511&sys_dark_mode=0&need_personal_recommend=1"
+    "&player_so_load=1&font_scale=100&is_android_pad_screen=0&network_type=4"
+    "&rom_version=miui_V140_V14.0.10.0.TMWEUXM&current_volume=13"
+    "&cdid=6e297aec-fb86-48ed-98cc-289027ea46dd"
+    "&client_ab_info=%7B%22middle_style_from_video%22%3Afalse%2C%22result_style_from_video%22%3Afalse%7D"
+)
 
 QUERY_PARAMS = {
     "iid": "1518852408614281", "device_id": "1518852408610185", "ac": "wifi",
@@ -122,6 +154,14 @@ def build_detail_body(series_id: str) -> str:
         "series_id": series_id,
     }
     return json.dumps(body, separators=(",", ":"))
+
+
+def build_search_url(keyword: str, rticket_ms: int) -> str:
+    from urllib.parse import quote
+    kw = quote(keyword, safe="")
+    q = _SEARCH_RAW_Q.replace(_SEARCH_CAP_KW, kw)
+    q = q.replace("_rticket=" + _SEARCH_CAP_RTICKET, "_rticket=" + str(rticket_ms))
+    return f"https://{HOST}{PATH_SEARCH}?{q}"
 
 
 def gen_trace_id() -> str:
@@ -203,6 +243,32 @@ def assemble_headers(sec: dict, rticket_ms: int, body: str):
     return headers, stub
 
 
+def assemble_search_headers(sec: dict, rticket_ms: int):
+    """search 是 GET：无 body / 无 x-ss-stub / 无 content-type，多一个空的 authorization: Bearer。"""
+    req_ticket = str(rticket_ms + 8)
+    reading_req = f"{req_ticket}-{random.randint(10**9, 2*10**9)}"
+    cookie_value = "; ".join(f"{k}={v}" for k, v in COOKIES)
+    return [
+        ("cookie", cookie_value),
+        ("accept", "application/json; charset=utf-8,application/x-protobuf"),
+        ("x-xs-from-web", "0"), ("x-ss-req-ticket", req_ticket),
+        ("x-reading-request", reading_req),
+        ("x-vc-bdturing-sdk-version", "4.0.3.cn"),
+        ("authorization", "Bearer "),
+        ("lc", "101"), ("sdk-version", "2"), ("passport-sdk-version", "5051452"),
+        ("x-tt-store-region", "cn-sc"), ("x-tt-store-region-src", "did"), ("x-ss-dp", "8662"),
+        ("x-tt-trace-id", gen_trace_id()),
+        ("user-agent",
+         "com.phoenix.read/72432 (Linux; U; Android 13; zh_CN; 23076RA4BC; "
+         "Build/TKQ1.221114.001; Cronet/TTNetVersion:04657795 2026-01-23 "
+         "QuicVersion:c67e9834 2025-09-08)"),
+        ("accept-encoding", "gzip, deflate, br"),
+        ("x-argus", sec["x-argus"]), ("x-gorgon", sec["x-gorgon"]),
+        ("x-helios", sec["x-helios"]), ("x-khronos", sec["x-khronos"]),
+        ("x-ladon", sec["x-ladon"]), ("x-medusa", sec["x-medusa"]),
+    ]
+
+
 def decode_response(raw: bytes) -> str:
     import io
     try:
@@ -223,21 +289,24 @@ def decode_response(raw: bytes) -> str:
     return raw.decode("utf-8", "replace")
 
 
-def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
-             pump: int, send: bool, out_path: str):
-    """对单条接口：生成签名头 -> 组装请求头 -> 写 json (-> 默认真实发送)。"""
-    rticket_ms = int(time.time() * 1000)
-    url = build_url(path, rticket_ms)
+def sign_one(api: str, method: str, url: str, rticket_ms: int, body: str,
+             ident_key: str, ident_val: str, pump: int, send: bool, out_path: str,
+             search: bool = False):
+    """对单条接口：生成签名头 -> 组装请求头 -> 写 json (-> 默认真实发送)。
+    search=True 时为 GET：无 body、无 x-ss-stub，用 search 专属请求头。"""
     sec = run_harness(url, body, pump, api)
-    headers, stub = assemble_headers(sec, rticket_ms, body)
+    if search:
+        headers = assemble_search_headers(sec, rticket_ms)
+        stub = None
+    else:
+        headers, stub = assemble_headers(sec, rticket_ms, body)
 
     result = {
         "api": api,
         ident_key: ident_val,
         "_rticket": rticket_ms,
+        "method": method,
         "url": url,
-        "body": body,
-        "x-ss-stub": stub,
         "security_headers": {
             "x-argus": sec["x-argus"], "x-gorgon": sec["x-gorgon"],
             "x-helios": sec["x-helios"], "x-khronos": sec["x-khronos"],
@@ -245,6 +314,9 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
         },
         "request_headers": dict(headers),
     }
+    if not search:
+        result["body"] = body
+        result["x-ss-stub"] = stub
 
     print(f"\n[*] [{api}] 6 security headers:")
     for k in ("x-argus", "x-gorgon", "x-helios", "x-khronos", "x-ladon", "x-medusa"):
@@ -256,10 +328,14 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
         except ImportError:
             print("[!] 发送需要 httpx：pip install \"httpx[http2]\" brotli ；本次跳过发送(json 已写出)。")
         else:
-            content = body.encode("utf-8")
-            print(f"\n[*] [{api}] POST https://{HOST}{path} (HTTP/2) ...", flush=True)
+            print(f"\n[*] [{api}] {method} https://{HOST}{url.split(HOST,1)[-1].split('?',1)[0]} (HTTP/2) ...",
+                  flush=True)
             with httpx.Client(http2=True, timeout=30, verify=True) as client:
-                req = client.build_request("POST", url, headers=headers, content=content)
+                if method == "GET":
+                    req = client.build_request("GET", url, headers=headers)
+                else:
+                    req = client.build_request("POST", url, headers=headers,
+                                               content=body.encode("utf-8"))
                 resp = client.send(req)
             text = decode_response(resp.content)
             result["response"] = {
@@ -280,17 +356,18 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
 
 def main():
     ap = argparse.ArgumentParser(
-        description="绿色版 metasec 签名器：-vid 出 play(video_model) 的 json，-sid 出 detail(video_detail) 的 json",
-        usage="python run.py -vid <video_id>   |   python run.py -sid <series_id>   [-nosend] [-pump N]")
+        description="绿色版 metasec 签名器：-vid 出 play(video_model)，-sid 出 detail(video_detail)，-search 出 search 结果(result.json)",
+        usage="python run.py -vid <video_id> | -sid <series_id> | -search <关键词>   [-nosend] [-pump N]")
     ap.add_argument("-vid", dest="vid", default=None, help="video_model(play) 的 video_id，给了就出 <vid>.video_model.json")
     ap.add_argument("-sid", dest="sid", default=None, help="video_detail 的 series_id，给了就出 <sid>.video_detail.json")
+    ap.add_argument("-search", dest="search", default=None, help="搜索关键词(GET search/tab/v)，给了就出 result.json")
     ap.add_argument("-nosend", dest="nosend", action="store_true", help="只本地生成签名 json，不真实发请求（默认会发）")
     ap.add_argument("-pump", dest="pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
     ap.add_argument("-out", dest="out", default=None, help="自定义输出 json 路径")
     args = ap.parse_args()
 
-    if not args.vid and not args.sid:
-        ap.error("请用 -vid <video_id>(取 play) 或 -sid <series_id>(取 detail)，至少给一个")
+    if not args.vid and not args.sid and not args.search:
+        ap.error("请用 -vid <video_id>(play) / -sid <series_id>(detail) / -search <关键词>(搜索)，至少给一个")
 
     send = not args.nosend
     print(f"[*] java = {JAVA}  send = {send}")
@@ -298,14 +375,23 @@ def main():
     if args.vid:
         print(f"[*] video_id  = {args.vid}")
         out = args.out or os.path.join(HERE, f"{args.vid}.video_model.json")
-        sign_one("play", PATH_PLAY, build_play_body(args.vid),
+        rt = int(time.time() * 1000)
+        sign_one("play", "POST", build_url(PATH_PLAY, rt), rt, build_play_body(args.vid),
                  "video_id", args.vid, args.pump, send, out)
 
     if args.sid:
         print(f"[*] series_id = {args.sid}")
         out = args.out or os.path.join(HERE, f"{args.sid}.video_detail.json")
-        sign_one("detail", PATH_DETAIL, build_detail_body(args.sid),
+        rt = int(time.time() * 1000)
+        sign_one("detail", "POST", build_url(PATH_DETAIL, rt), rt, build_detail_body(args.sid),
                  "series_id", args.sid, args.pump, send, out)
+
+    if args.search:
+        print(f"[*] search    = {args.search}")
+        out = args.out or os.path.join(HERE, "result.json")
+        rt = int(time.time() * 1000)
+        sign_one("search", "GET", build_search_url(args.search, rt), rt, "",
+                 "query", args.search, args.pump, send, out, search=True)
 
 
 if __name__ == "__main__":

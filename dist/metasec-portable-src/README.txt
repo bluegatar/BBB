@@ -5,15 +5,16 @@
 【这是什么】
   在本地用 unidbg 模拟执行 libmetasec_ml.so，生成番茄/抖音的 6 个安全头
   (x-argus/x-gorgon/x-helios/x-khronos/x-ladon/x-medusa)，并把结果写成 json。
-  两条接口，各对应一个命令（没有 both）：
-    * -vid <video_id>   取 play(video_model)，输出 <video_id>.video_model.json
-    * -sid <series_id>  取 detail(video_detail)，输出 <series_id>.video_detail.json
+  三条接口，各对应一个命令（没有 both）：
+    * -vid <video_id>    取 play(video_model)，POST，输出 <video_id>.video_model.json
+    * -sid <series_id>   取 detail(video_detail)，POST，输出 <series_id>.video_detail.json
+    * -search <关键词>   取 search(search/tab/v)，GET，输出 result.json
   核心 Java(MetasecDump) 已用 ZKM 做了【控制流平坦化 + 异常混淆 + 字符串加密】
   混淆 —— 反编译(jadx 等)看到的是被打散的状态机和加密字符串，逆向难度很高。
 
 【目录结构 —— 不要改名、不要拆开】
   metasec-portable/
-  ├─ run.py                 ← 你运行的入口(-vid 出 play / -sid 出 detail)
+  ├─ run.py                 ← 你运行的入口(-vid play / -sid detail / -search 搜索)
   ├─ MetasecDump-obf.jar    ← 混淆后的签名 harness
   ├─ jre/                   ← 内置 JDK8 运行时(green, 不依赖系统 Java)
   ├─ deps/                  ← unidbg / jna / fastjson 等依赖 jar
@@ -29,15 +30,22 @@
         python run.py -sid 7650887007270341694
      → 7650887007270341694.video_detail.json
 
-  3) 只本地生成签名 json、不发请求（纯离线，不需第三方库）：
+  3) 取 search 的 json（GET，关键词带空格/中文请用引号包起来）：
+        python run.py -search "家里家外2"
+     → result.json
+
+  4) 只本地生成签名 json、不发请求（纯离线，不需第三方库）：
         python run.py -vid 7650889194310470681 -nosend
         python run.py -sid 7650887007270341694 -nosend
+        python run.py -search "家里家外2" -nosend
 
-  4) 其它可选参数：
+  5) 其它可选参数：
         -pump N     worker 线程泵秒数(默认 2；偶发出错可调到 3)
         -out PATH   自定义输出 json 路径
 
-  每个 json 都含：url / body / x-ss-stub / 6 个签名头 / 完整 request_headers；
+  POST 接口(-vid/-sid)的 json 含：url / body / x-ss-stub / 6 个签名头 / request_headers；
+  GET 接口(-search)的 json 含：method / url / 6 个签名头 / request_headers(无 body、
+  无 x-ss-stub、无 content-type，多一个空的 authorization: Bearer)。
   默认发送成功时还会多一个 response 字段(服务端返回的数据)。
 
 【对 Python 的要求】
