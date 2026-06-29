@@ -155,10 +155,15 @@ def build_detail_body(series_id: str) -> str:
     return json.dumps(body, separators=(",", ":"))
 
 
-def build_search_url(keyword: str, rticket_ms: int) -> str:
+def build_search_url(keyword: str, rticket_ms: int, offset: int = 0, passback: str = "") -> str:
     from urllib.parse import quote
     kw = quote(keyword, safe="")
     q = _SEARCH_RAW_Q.format(query=kw, rticket=rticket_ms)
+    if offset:
+        q = q.replace("&offset=0&", f"&offset={offset}&")
+    if passback:
+        # 翻页时把 passback 游标补在 query 前面（与抓包顺序一致）
+        q = q.replace("&query=", f"&passback={passback}&query=")
     return f"https://{HOST}{PATH_SEARCH}?{q}"
 
 
@@ -352,6 +357,99 @@ def sign_one(api: str, method: str, url: str, rticket_ms: int, body: str,
     return result
 
 
+def _primary_tab(body: dict):
+    """取响应里的主结果 tab（selected_tab_idx 指向的那个，通常是“综合”）。"""
+    tabs = body.get("search_tabs") or []
+    if not tabs:
+        return {}
+    idx = body.get("selected_tab_idx", 0) or 0
+    return tabs[idx] if 0 <= idx < len(tabs) else tabs[0]
+
+
+def _item_key(it: dict):
+    return it.get("book_id") or it.get("search_result_id") or it.get("cell_id") or id(it)
+
+
+def sign_search(keyword: str, pages: int, pump: int, send: bool, out_path: str):
+    """search(GET)：默认 1 页(6 条)。pages>1 时按响应里的 next_offset/passback 逐页翻，
+    把主 tab 的结果去重合并到 result.json 的 items；每页的原始请求/响应也保留在 pages 里。"""
+    httpx = None
+    if send:
+        try:
+            import httpx as _httpx
+            httpx = _httpx
+        except ImportError:
+            print("[!] 发送需要 httpx：pip install \"httpx[http2]\" brotli ；本次跳过发送(只签第 1 页)。")
+
+    page_records, items, seen = [], [], set()
+    offset, passback = 0, ""
+    fetched = 0
+
+    for p in range(max(1, pages)):
+        rt = int(time.time() * 1000)
+        url = build_search_url(keyword, rt, offset, passback)
+        sec = run_harness(url, "", pump, "search")
+        headers = assemble_search_headers(sec, rt)
+        rec = {
+            "page": p, "offset": offset, "passback": passback,
+            "_rticket": rt, "url": url,
+            "security_headers": {k: sec[k] for k in
+                ("x-argus", "x-gorgon", "x-helios", "x-khronos", "x-ladon", "x-medusa")},
+            "request_headers": dict(headers),
+        }
+        print(f"\n[*] [search] page {p} offset={offset} -> 6 security headers ok")
+
+        if not httpx:
+            page_records.append(rec)
+            break  # 离线/无 httpx：只能签第 1 页(翻页需要服务端响应里的游标)
+
+        print(f"[*] [search] GET page {p} (HTTP/2) ...", flush=True)
+        with httpx.Client(http2=True, timeout=30, verify=True) as client:
+            resp = client.send(client.build_request("GET", url, headers=headers))
+        text = decode_response(resp.content)
+        rec["response"] = {"http_version": resp.http_version, "status": resp.status_code,
+                           "headers": dict(resp.headers), "body": text}
+        page_records.append(rec)
+        fetched += 1
+
+        try:
+            body = json.loads(text)
+        except Exception:
+            print(f"[!] [search] page {p} 响应非 JSON，停止翻页"); break
+        tab = _primary_tab(body)
+        data = tab.get("data") or []
+        for it in data:
+            k = _item_key(it)
+            if k not in seen:
+                seen.add(k); items.append(it)
+        print(f"[*] [search] page {p}: status {resp.status_code} 本页 {len(data)} 条, "
+              f"累计 {len(items)} 条, has_more={tab.get('has_more')}")
+        if not tab.get("has_more"):
+            print("[*] [search] 服务端已无更多结果，停止翻页"); break
+        offset = tab.get("next_offset", offset)
+        passback = str(tab.get("passback", "") or "")
+
+    result = {
+        "api": "search", "query": keyword, "method": "GET",
+        "pages_requested": pages, "pages_fetched": fetched,
+        "total_items": len(items),
+        "items": items,
+        "pages": page_records,
+    }
+    # 顶层镜像第 1 页，兼容旧的 result.json 用法
+    first = page_records[0]
+    result["url"] = first["url"]
+    result["security_headers"] = first["security_headers"]
+    result["request_headers"] = first["request_headers"]
+    if "response" in first:
+        result["response"] = first["response"]
+
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+    print(f"[+] [search] wrote {out_path}  (pages_fetched={fetched}, total_items={len(items)})")
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="绿色版 metasec 签名器：-vid 出 play(video_model)，-sid 出 detail(video_detail)，-search 出 search 结果(result.json)",
@@ -359,6 +457,7 @@ def main():
     ap.add_argument("-vid", dest="vid", default=None, help="video_model(play) 的 video_id，给了就出 <vid>.video_model.json")
     ap.add_argument("-sid", dest="sid", default=None, help="video_detail 的 series_id，给了就出 <sid>.video_detail.json")
     ap.add_argument("-search", dest="search", default=None, help="搜索关键词(GET search/tab/v)，给了就出 result.json")
+    ap.add_argument("-pages", dest="pages", type=int, default=1, help="search 翻几页合并(默认1；每页约6~10条，需发送才能翻页)")
     ap.add_argument("-nosend", dest="nosend", action="store_true", help="只本地生成签名 json，不真实发请求（默认会发）")
     ap.add_argument("-pump", dest="pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
     ap.add_argument("-out", dest="out", default=None, help="自定义输出 json 路径")
@@ -385,11 +484,9 @@ def main():
                  "series_id", args.sid, args.pump, send, out)
 
     if args.search:
-        print(f"[*] search    = {args.search}")
+        print(f"[*] search    = {args.search}  pages = {args.pages}")
         out = args.out or os.path.join(HERE, "result.json")
-        rt = int(time.time() * 1000)
-        sign_one("search", "GET", build_search_url(args.search, rt), rt, "",
-                 "query", args.search, args.pump, send, out, search=True)
+        sign_search(args.search, args.pages, args.pump, send, out)
 
 
 if __name__ == "__main__":
