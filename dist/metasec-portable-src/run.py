@@ -9,20 +9,20 @@
       x-argus / x-gorgon / x-helios / x-khronos / x-ladon / x-medusa
   并把"请求 URL + body + 6 个签名头 + x-ss-stub + 完整请求头"写进 json。
 
-支持两条接口（默认两条都跑）：
-  * video_model (play)  —— 传 --video-id，取播放地址，输出 <video_id>.video_model.json
-  * video_detail        —— 传 --series-id，取详情，输出 <series_id>.video_detail.json
-                           （按抓包，video_detail 的 body 走 gzip + content-encoding: gzip）
+两条接口（各对应一个命令，没有 both）：
+  * -vid <video_id>   取 play(video_model)，输出 <video_id>.video_model.json
+  * -sid <series_id>  取 detail(video_detail)，输出 <series_id>.video_detail.json
 
 用法（解压后在本目录运行）：
-    python run.py                                   # 用默认 id，两条接口都离线生成 json
-    python run.py --video-id 7650889194310470681 --series-id 7650887007270341694
-    python run.py --api detail --series-id 7650887007270341694
-    python run.py --api both --send                 # 额外用签名头真实 POST(需 httpx + 有效 cookie)
+    python run.py -vid 7650889194310470681          # play：签名并真实发送，写 json
+    python run.py -sid 7650887007270341694          # detail：签名并真实发送，写 json
+    python run.py -vid 7650889194310470681 -nosend  # 只本地生成签名 json，不发请求
 
 注意：
-  * 默认【离线】只生成签名 json，不联网、不需要第三方库，一定能出 json。
-  * --send 需要 `pip install "httpx[http2]" brotli`，且服务端 cookie 未过期才会返回有效数据。
+  * 默认【会真实发送】(需 `pip install "httpx[http2]" brotli` 且 cookie 未过期)；
+    没装 httpx 时会跳过发送但仍写出签名 json。想纯离线就加 -nosend。
+  * 两条接口都按【明文 JSON body】发送 —— 抓包里 video_detail 的 content-encoding: gzip
+    并非必需，实测带 gzip 反而被服务端判 110001「未知异常」，明文发送返回 200。
   * 本目录结构不要改名：jre/  deps/  libs/  MetasecDump-obf.jar  都要在同一目录。
 """
 
@@ -171,8 +171,9 @@ def run_harness(url: str, body: str, pump: int, tag: str) -> dict:
     return {k.lower(): v for k, v in headers.items()}
 
 
-def assemble_headers(sec: dict, rticket_ms: int, body: str, gzip_body: bool):
-    """组装完整请求头。x-ss-stub = md5(未压缩 body)；gzip_body=True 时加 content-encoding: gzip。"""
+def assemble_headers(sec: dict, rticket_ms: int, body: str):
+    """组装完整请求头。x-ss-stub = md5(body)。两条接口都按明文 body 发送(实测服务端接受;
+    抓包里 video_detail 的 content-encoding: gzip 不是必需的, 反而会被服务端判 110001)。"""
     req_ticket = str(rticket_ms + 8)
     reading_req = f"{req_ticket}-{random.randint(10**9, 2*10**9)}"
     stub = hashlib.md5(body.encode("utf-8")).hexdigest().upper()
@@ -186,8 +187,6 @@ def assemble_headers(sec: dict, rticket_ms: int, body: str, gzip_body: bool):
         ("passport-sdk-version", "5051452"),
         ("content-type", "application/json; charset=utf-8"),
     ]
-    if gzip_body:
-        headers.append(("content-encoding", "gzip"))
     headers += [
         ("x-ss-stub", stub), ("x-tt-store-region", "cn-sc"),
         ("x-tt-store-region-src", "did"), ("x-ss-dp", "8662"),
@@ -225,12 +224,12 @@ def decode_response(raw: bytes) -> str:
 
 
 def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
-             pump: int, gzip_body: bool, send: bool, out_path: str):
-    """对单条接口：生成签名头 -> 组装请求头 -> 写 json (-> 可选真实发送)。"""
+             pump: int, send: bool, out_path: str):
+    """对单条接口：生成签名头 -> 组装请求头 -> 写 json (-> 默认真实发送)。"""
     rticket_ms = int(time.time() * 1000)
     url = build_url(path, rticket_ms)
     sec = run_harness(url, body, pump, api)
-    headers, stub = assemble_headers(sec, rticket_ms, body, gzip_body)
+    headers, stub = assemble_headers(sec, rticket_ms, body)
 
     result = {
         "api": api,
@@ -238,7 +237,6 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
         "_rticket": rticket_ms,
         "url": url,
         "body": body,
-        "content_encoding": "gzip" if gzip_body else None,
         "x-ss-stub": stub,
         "security_headers": {
             "x-argus": sec["x-argus"], "x-gorgon": sec["x-gorgon"],
@@ -256,11 +254,10 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
         try:
             import httpx
         except ImportError:
-            print("[!] --send 需要 httpx：pip install \"httpx[http2]\" brotli ；本次跳过发送。")
+            print("[!] 发送需要 httpx：pip install \"httpx[http2]\" brotli ；本次跳过发送(json 已写出)。")
         else:
-            content = gzip.compress(body.encode("utf-8")) if gzip_body else body.encode("utf-8")
-            print(f"\n[*] [{api}] POST https://{HOST}{path} (HTTP/2"
-                  f"{', gzip body' if gzip_body else ''}) ...", flush=True)
+            content = body.encode("utf-8")
+            print(f"\n[*] [{api}] POST https://{HOST}{path} (HTTP/2) ...", flush=True)
             with httpx.Client(http2=True, timeout=30, verify=True) as client:
                 req = client.build_request("POST", url, headers=headers, content=content)
                 resp = client.send(req)
@@ -282,31 +279,33 @@ def sign_one(api: str, path: str, body: str, ident_key: str, ident_val: str,
 
 
 def main():
-    ap = argparse.ArgumentParser(description="绿色版 metasec 签名器（video_model + video_detail）")
-    ap.add_argument("--api", choices=["play", "detail", "both"], default="both",
-                    help="跑哪条接口：play=video_model, detail=video_detail, both=两条都跑(默认)")
-    ap.add_argument("--video-id", default="7650889194310470681", help="video_model(play) 的 video_id")
-    ap.add_argument("--series-id", default="7650887007270341694", help="video_detail 的 series_id")
-    ap.add_argument("--pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
-    ap.add_argument("--send", action="store_true",
-                    help="额外用签名头真实 POST 到服务端(需要 httpx + 有效 cookie)")
-    ap.add_argument("--out-play", default=None, help="play 输出 json 路径(默认 <video_id>.video_model.json)")
-    ap.add_argument("--out-detail", default=None, help="detail 输出 json 路径(默认 <series_id>.video_detail.json)")
+    ap = argparse.ArgumentParser(
+        description="绿色版 metasec 签名器：-vid 出 play(video_model) 的 json，-sid 出 detail(video_detail) 的 json",
+        usage="python run.py -vid <video_id>   |   python run.py -sid <series_id>   [-nosend] [-pump N]")
+    ap.add_argument("-vid", dest="vid", default=None, help="video_model(play) 的 video_id，给了就出 <vid>.video_model.json")
+    ap.add_argument("-sid", dest="sid", default=None, help="video_detail 的 series_id，给了就出 <sid>.video_detail.json")
+    ap.add_argument("-nosend", dest="nosend", action="store_true", help="只本地生成签名 json，不真实发请求（默认会发）")
+    ap.add_argument("-pump", dest="pump", type=int, default=2, help="worker 线程泵秒数(默认2)")
+    ap.add_argument("-out", dest="out", default=None, help="自定义输出 json 路径")
     args = ap.parse_args()
 
-    print(f"[*] java      = {JAVA}")
+    if not args.vid and not args.sid:
+        ap.error("请用 -vid <video_id>(取 play) 或 -sid <series_id>(取 detail)，至少给一个")
 
-    if args.api in ("play", "both"):
-        print(f"[*] video_id  = {args.video_id}")
-        out = args.out_play or os.path.join(HERE, f"{args.video_id}.video_model.json")
-        sign_one("play", PATH_PLAY, build_play_body(args.video_id),
-                 "video_id", args.video_id, args.pump, False, args.send, out)
+    send = not args.nosend
+    print(f"[*] java = {JAVA}  send = {send}")
 
-    if args.api in ("detail", "both"):
-        print(f"[*] series_id = {args.series_id}")
-        out = args.out_detail or os.path.join(HERE, f"{args.series_id}.video_detail.json")
-        sign_one("detail", PATH_DETAIL, build_detail_body(args.series_id),
-                 "series_id", args.series_id, args.pump, True, args.send, out)
+    if args.vid:
+        print(f"[*] video_id  = {args.vid}")
+        out = args.out or os.path.join(HERE, f"{args.vid}.video_model.json")
+        sign_one("play", PATH_PLAY, build_play_body(args.vid),
+                 "video_id", args.vid, args.pump, send, out)
+
+    if args.sid:
+        print(f"[*] series_id = {args.sid}")
+        out = args.out or os.path.join(HERE, f"{args.sid}.video_detail.json")
+        sign_one("detail", PATH_DETAIL, build_detail_body(args.sid),
+                 "series_id", args.sid, args.pump, send, out)
 
 
 if __name__ == "__main__":
